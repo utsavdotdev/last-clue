@@ -129,3 +129,66 @@ def test_full_multiplayer_round_over_websockets_with_four_clients() -> None:
             assert state["phase"] == "RESULTS"
             assert state["outcome"]["winner"] == "SURVIVORS"
             assert state["outcome"]["secret_word"] == secret_word
+
+
+def test_serves_compiled_frontend_and_imposter_escape_path() -> None:
+    settings = Settings(host="127.0.0.1", port=8765, ai_enabled=False)
+    app = create_app(settings, room_code="ESCAPE")
+
+    with TestClient(app) as client:
+        index_resp = client.get("/")
+        assert index_resp.status_code == 200
+        assert "The Last Clue" in index_resp.text
+
+        players = []
+        for idx, name in enumerate(["Arthur", "Lucy", "Quincey", "Seward"]):
+            resp = client.post(
+                "/api/join",
+                json={"nickname": name, "room_code": "ESCAPE", "as_host": idx == 0},
+            )
+            assert resp.status_code == 200
+            players.append(resp.json())
+
+        with (
+            client.websocket_connect(
+                f"/ws?player_id={players[0]['player_id']}&token={players[0]['reconnect_token']}"
+            ) as ws0,
+            client.websocket_connect(
+                f"/ws?player_id={players[1]['player_id']}&token={players[1]['reconnect_token']}"
+            ) as ws1,
+            client.websocket_connect(
+                f"/ws?player_id={players[2]['player_id']}&token={players[2]['reconnect_token']}"
+            ) as ws2,
+            client.websocket_connect(
+                f"/ws?player_id={players[3]['player_id']}&token={players[3]['reconnect_token']}"
+            ) as ws3,
+        ):
+            sockets = {
+                players[0]["player_id"]: ws0,
+                players[1]["player_id"]: ws1,
+                players[2]["player_id"]: ws2,
+                players[3]["player_id"]: ws3,
+            }
+
+            ws0.send_json({"type": "start_round", "use_ai_intro": False})
+            ws0.send_json({"type": "begin_clue_round"})
+            state = client.get("/api/state").json()["public"]
+            for speaker_id in state["speaking_order"]:
+                sockets[speaker_id].send_json({"type": "submit_clue", "clue": "Foggy crypt"})
+
+            ws0.send_json({"type": "begin_voting"})
+
+            # Find a Survivor to wrongly accuse so the Imposter escapes
+            imposter_id = app.state.room_manager.engine.imposter_id
+            innocent_id = next(p["player_id"] for p in players if p["player_id"] != imposter_id)
+
+            for p in players:
+                pid = p["player_id"]
+                target = innocent_id if pid != innocent_id else imposter_id
+                sockets[pid].send_json({"type": "cast_vote", "target_id": target})
+
+            state = client.get("/api/state").json()["public"]
+            assert state["phase"] == "RESULTS"
+            assert state["outcome"]["winner"] == "IMPOSTER"
+            assert state["outcome"]["reason"] == "IMPOSTER_ESCAPED_VOTE"
+            assert state["outcome"]["accused_id"] == innocent_id
