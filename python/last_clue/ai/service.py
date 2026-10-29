@@ -51,11 +51,40 @@ class HauntedAIService:
             else "AI standby - using built-in content until local model responds"
         )
         self._custom_words: list[WordEntry] = []
+        self._intro_cache: dict[str, list[str]] = {}
+        self._narration_cache: dict[str, str] = {}
 
     @property
     def custom_words(self) -> list[WordEntry]:
         with self._lock:
             return list(self._custom_words)
+
+    def prefetch_round_flavor_async(
+        self,
+        *,
+        category: str,
+        secret_word: str,
+        synonyms: list[str] | None = None,
+    ) -> None:
+        """Warm the intro and narration cache on a daemon thread without blocking gameplay."""
+        if not self.enabled or not is_local_model_url(self.llm_url):
+            return
+
+        def _worker() -> None:
+            try:
+                intro, used_ai = self.get_round_intro(
+                    category=category,
+                    secret_word=secret_word,
+                    synonyms=synonyms,
+                    use_ai=True,
+                )
+                if used_ai:
+                    with self._lock:
+                        self._intro_cache.setdefault(category, []).append(intro)
+            except Exception:
+                pass
+
+        threading.Thread(target=_worker, name="last-clue-ai-prefetch", daemon=True).start()
 
     def set_enabled(self, enabled: bool) -> None:
         with self._lock:
@@ -85,11 +114,29 @@ class HauntedAIService:
         synonyms: list[str] | None = None,
         use_ai: bool = False,
     ) -> tuple[str, bool]:
-        """Return (intro_text, from_ai). Uses fast fallback unless use_ai is requested and enabled."""
+        """Return (intro_text, from_ai). Uses cached or live local AI when requested, else fallback."""
         if not self.enabled or not use_ai or not is_local_model_url(self.llm_url):
             return self._fallback.get_round_intro(category), False
 
         with self._lock:
+            cached_list = self._intro_cache.get(category)
+            if cached_list:
+                from last_clue.ai.local_provider import validate_round_intro
+
+                while cached_list:
+                    candidate = cached_list.pop(0)
+                    try:
+                        valid = validate_round_intro(
+                            candidate,
+                            secret_word=secret_word,
+                            synonyms=synonyms,
+                        )
+                        self._status = AIStatusState.READY
+                        self._detail = f"Local AI active ({self.llm_model})"
+                        return valid, True
+                    except ValueError:
+                        continue
+
             self._status = AIStatusState.GENERATING
             self._detail = f"Generating intro with local {self.llm_model}..."
 

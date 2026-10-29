@@ -134,6 +134,27 @@ def test_haunted_ai_service_falls_back_gracefully_on_timeout_or_leak() -> None:
     assert "using built-in content" in service.status_view().detail
 
 
+def test_haunted_ai_service_generates_custom_words_and_caches_intro() -> None:
+    json_payload = '{"words": [{"word": "Bone Lantern", "category": "Cursed Objects", "difficulty": "medium", "synonyms": ["Skull lamp"]}]}'
+    transport = FakeTransport(response_text=json_payload, should_fail=False)
+    client = LlamaServerClient(
+        url="http://llamacpp-models-runner:9999/v1/chat/completions",
+        model="Qwen3.5-0.8B-Q4_0",
+        transport=transport,
+    )
+    service = HauntedAIService(
+        llm_url=client.url,
+        llm_model=client.model,
+        local_provider=LocalHorrorProvider(client),
+    )
+
+    entries = service.generate_custom_words("Cursed Objects", count=1)
+    assert len(entries) == 1
+    assert entries[0].word == "Bone Lantern"
+    assert service.status_view().status == AIStatusState.READY
+    assert service.status_view().custom_words_count == 1
+
+
 def test_matrix_adapter_renders_all_ten_ghost_states_and_calls_bridge() -> None:
     recorded_calls: list[tuple[str, int, int]] = []
 
