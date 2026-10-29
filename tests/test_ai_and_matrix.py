@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+import re
 import pytest
 from last_clue.ai.local_provider import (
     LlamaServerClient,
@@ -16,8 +18,10 @@ from last_clue.hardware.frames import (
     FRAME_LENGTH,
     GHOST_STATE_CODES,
     ROWS,
+    STATE_PRIMARY_SPRITES,
 )
 from last_clue.hardware.matrix_adapter import MatrixAdapter
+from last_clue.hardware.simulator import format_ascii_matrix
 from last_clue.hardware.uno_q_matrix import UnoQBridgeClient
 from last_clue.models import AIStatusState, GhostMatrixState
 
@@ -149,3 +153,17 @@ def test_matrix_adapter_renders_all_ten_ghost_states_and_calls_bridge() -> None:
         assert len(snap.pixels) == FRAME_LENGTH
         assert ROWS * COLS == 104
         assert any(px == 1 for px in snap.pixels)
+        ascii_art = format_ascii_matrix(state)
+        assert len(ascii_art.splitlines()) == ROWS
+
+
+def test_sketch_ino_sprite_masks_match_python_frames() -> None:
+    sketch_path = Path(__file__).resolve().parents[1] / "sketch" / "sketch.ino"
+    sketch_text = sketch_path.read_text(encoding="utf-8")
+    assert 'Bridge.provide_safe("set_ghost_state", set_ghost_state);' in sketch_text
+
+    for state, masks in STATE_PRIMARY_SPRITES.items():
+        mask_str = ", ".join(str(m) for m in masks)
+        assert re.search(rf"\{{{re.escape(mask_str)}\}}", sketch_text), (
+            f"Missing primary sprite mask for {state} in sketch.ino"
+        )
