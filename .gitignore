@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Frontend
+frontend/node_modules/
+frontend/.vite/
+frontend/dist/
+
+# Environment & OS
+.env
+.DS_Store
+*.log

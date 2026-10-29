@@ -1,0 +1,8 @@
+name: The Last Clue
+description: Offline-capable LAN multiplayer horror social-deduction word game hosted on Arduino UNO Q with local AI and an 8x13 LED matrix ghost.
+icon: "👻"
+ports:
+  - 8765
+bricks:
+  - arduino:llm:
+      model: "llamacpp:Qwen3.5-0.8B-Q4_0"
