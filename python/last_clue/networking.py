@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import io
+import logging
 import socket
-import qrcode
-import qrcode.image.svg
+
+logger = logging.getLogger(__name__)
 
 
 def detect_lan_ips() -> list[str]:
@@ -45,16 +45,31 @@ def primary_join_url(port: int, room_code: str | None = None) -> str:
 
 
 def generate_qr_svg(url: str) -> str:
-    """Generate a self-contained SVG QR code string for the given join URL."""
-    qr = qrcode.QRCode(
-        version=None,
-        error_correction=qrcode.constants.ERROR_CORRECT_M,
-        box_size=8,
-        border=2,
-    )
-    qr.add_data(url)
-    qr.make(fit=True)
-    img = qr.make_image(image_factory=qrcode.image.svg.SvgPathImage)
-    buffer = io.BytesIO()
-    img.save(buffer)
-    return buffer.getvalue().decode("utf-8")
+    """Generate a self-contained SVG QR code for the join URL.
+
+    Prefer the optional ``qrcode`` package when present, otherwise use the
+    stdlib-only encoder in ``last_clue.qr_svg`` so App Lab starts without it.
+    """
+    try:
+        import io
+
+        import qrcode
+        import qrcode.image.svg
+
+        qr = qrcode.QRCode(
+            version=None,
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
+            box_size=8,
+            border=2,
+        )
+        qr.add_data(url)
+        qr.make(fit=True)
+        img = qr.make_image(image_factory=qrcode.image.svg.SvgPathImage)
+        buffer = io.BytesIO()
+        img.save(buffer)
+        return buffer.getvalue().decode("utf-8")
+    except Exception as exc:
+        logger.info("Using stdlib QR encoder (%s)", exc)
+        from last_clue.qr_svg import generate_qr_svg as stdlib_qr_svg
+
+        return stdlib_qr_svg(url)
