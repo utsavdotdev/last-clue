@@ -37,6 +37,7 @@ export interface ClueSubmission {
   nickname: string;
   clue: string;
   turn_index: number;
+  round_pass: number;
 }
 
 export interface PublicPlayerView {
@@ -88,6 +89,7 @@ export interface PublicGameState {
   room_code: string;
   phase: GamePhase;
   round_number: number;
+  clue_round_number: number;
   min_players: number;
   max_players: number;
   players: PublicPlayerView[];
@@ -104,10 +106,6 @@ export interface PublicGameState {
   accused_player_id: string | null;
   votes_cast_count: number;
   eligible_voters_count: number;
-  timer_seconds_remaining: number | null;
-  timer_total_seconds: number | null;
-  discussion_seconds: number;
-  voting_seconds: number;
   outcome: RoundOutcomeView | null;
   ai_status: AIStatusView;
   matrix: MatrixPreviewView;

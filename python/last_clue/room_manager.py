@@ -23,7 +23,7 @@ RATE_LIMIT_WINDOW_SECONDS = 10.0
 
 
 class RoomManager:
-    """Coordinates a single active room on the UNO Q, managing WebSockets and timers."""
+    """Coordinates a single active room on the UNO Q, managing WebSockets and state sync."""
 
     def __init__(
         self,
@@ -41,10 +41,6 @@ class RoomManager:
             room_code=code,
             matrix=matrix,
             ai_service=ai_service,
-            discussion_seconds=settings.discussion_seconds,
-            voting_seconds=settings.voting_seconds,
-            clue_timeout_seconds=settings.clue_timeout_seconds,
-            final_guess_seconds=settings.final_guess_seconds,
         )
         self._lock = asyncio.Lock()
         self._player_sockets: dict[str, set[WebSocket]] = {}
@@ -162,6 +158,11 @@ class RoomManager:
             self.engine.begin_clue_round()
             return
 
+        if action == "another_clue_round":
+            self.engine.require_host(player_id=player_id, token=token)
+            self.engine.start_another_clue_round()
+            return
+
         if action == "submit_clue":
             if not player_id:
                 raise GameRuleError("Authentication required.")
@@ -218,16 +219,6 @@ class RoomManager:
             self.engine.require_host(player_id=player_id, token=token)
             self.engine.update_settings(
                 selected_category=payload.get("selected_category"),
-                discussion_seconds=(
-                    int(payload["discussion_seconds"])
-                    if payload.get("discussion_seconds") is not None
-                    else None
-                ),
-                voting_seconds=(
-                    int(payload["voting_seconds"])
-                    if payload.get("voting_seconds") is not None
-                    else None
-                ),
                 ai_enabled=(
                     bool(payload["ai_enabled"])
                     if payload.get("ai_enabled") is not None
@@ -288,11 +279,3 @@ class RoomManager:
             await websocket.send_json({"type": "error", "message": detail})
         except Exception:
             pass
-
-    async def tick_timers(self) -> None:
-        """Periodic check to advance expired server timers and broadcast state."""
-        changed = False
-        async with self._lock:
-            changed = self.engine.check_and_advance_expired_timer()
-        if changed:
-            await self.broadcast_state()

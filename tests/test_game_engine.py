@@ -1,4 +1,4 @@
-"""Automated unit tests for The Last Clue game rules, privacy boundaries, and scoring."""
+"""Automated unit tests for The Last Clue untimed game rules, repeatable clue rounds, privacy boundaries, and scoring."""
 
 from __future__ import annotations
 
@@ -14,25 +14,13 @@ from last_clue.models import (
 from last_clue.word_packs import BUNDLED_WORD_PACKS, list_categories
 
 
-class FakeClock:
-    def __init__(self, initial: float = 1000.0) -> None:
-        self.now = initial
-
-    def __call__(self) -> float:
-        return self.now
-
-    def advance(self, seconds: float) -> None:
-        self.now += seconds
-
-
-def _make_engine_with_players(count: int = 4) -> tuple[GameEngine, FakeClock, list[str]]:
-    clock = FakeClock()
-    engine = GameEngine(room_code="CRYPT1", clock=clock)
+def _make_engine_with_players(count: int = 4) -> tuple[GameEngine, list[str]]:
+    engine = GameEngine(room_code="CRYPT1")
     pids: list[str] = []
     for idx in range(count):
         session = engine.join_player(f"Player{idx + 1}", as_host=(idx == 0))
         pids.append(session.player_id)
-    return engine, clock, pids
+    return engine, pids
 
 
 def test_word_packs_have_five_categories_and_ten_words_each() -> None:
@@ -57,7 +45,6 @@ def test_minimum_and_maximum_player_counts_and_unique_nicknames() -> None:
     with pytest.raises(GameRuleError, match="already taken"):
         engine.join_player("alice")
 
-    # Cannot start with only 3 players
     with pytest.raises(GameRuleError, match="At least 4"):
         engine.start_round()
 
@@ -67,7 +54,7 @@ def test_minimum_and_maximum_player_counts_and_unique_nicknames() -> None:
 
 
 def test_role_assignment_and_strict_private_payload_isolation() -> None:
-    engine, _, pids = _make_engine_with_players(5)
+    engine, pids = _make_engine_with_players(5)
     engine.start_round()
 
     public_state = engine.build_public_state()
@@ -76,7 +63,6 @@ def test_role_assignment_and_strict_private_payload_isolation() -> None:
     assert engine.active_word_entry is not None
     secret_word = engine.active_word_entry.word
 
-    # Public state must NEVER contain the secret word or imposter_id during active play
     assert secret_word not in str(public_json)
     assert public_state.outcome is None
 
@@ -99,42 +85,54 @@ def test_role_assignment_and_strict_private_payload_isolation() -> None:
     assert len(survivors) == 4
 
 
-def test_clue_round_turn_order_and_duplicate_submission_prevention() -> None:
-    engine, _, pids = _make_engine_with_players(4)
+def test_clue_round_and_repeatable_another_clue_round_flow() -> None:
+    engine, pids = _make_engine_with_players(4)
     engine.start_round()
 
-    # All players acknowledge role reveal -> automatically enters CLUE_ROUND
     for pid in pids:
         engine.mark_role_acknowledged(pid)
 
     assert engine.phase == GamePhase.CLUE_ROUND
+    assert engine.clue_round_number == 1
     assert len(engine.speaking_order) == 4
 
     first_speaker = engine.current_speaker_id
     assert first_speaker is not None
     wrong_speaker = next(pid for pid in pids if pid != first_speaker)
 
-    # Speaking out of turn is rejected
     with pytest.raises(GameRuleError, match="Wait for your turn"):
         engine.submit_clue(wrong_speaker, "Out of turn clue")
 
-    # Overly long clue is rejected
     with pytest.raises(GameRuleError, match="40 characters"):
         engine.submit_clue(first_speaker, "x" * 45)
 
-    # Submit valid clues in speaking order
     for idx, speaker_id in enumerate(list(engine.speaking_order)):
         assert engine.current_speaker_id == speaker_id
-        engine.submit_clue(speaker_id, f"Spooky clue {idx + 1}")
+        engine.submit_clue(speaker_id, f"First pass clue {idx + 1}")
         with pytest.raises(GameRuleError):
-            engine.submit_clue(speaker_id, "Second clue attempt")
+            engine.submit_clue(speaker_id, "Duplicate clue attempt")
 
+    # After everyone submits a clue, phase enters DISCUSSION (decision point) with no timer
     assert engine.phase == GamePhase.DISCUSSION
     assert len(engine.clues) == 4
+    assert all(c.round_pass == 1 for c in engine.clues)
+
+    # Choose "Another Clue Round" -> starts Clue Round 2 and keeps earlier clues
+    engine.start_another_clue_round()
+    assert engine.phase == GamePhase.CLUE_ROUND
+    assert engine.clue_round_number == 2
+
+    for idx, speaker_id in enumerate(list(engine.speaking_order)):
+        engine.submit_clue(speaker_id, f"Second pass clue {idx + 1}")
+
+    assert engine.phase == GamePhase.DISCUSSION
+    assert len(engine.clues) == 8
+    assert [c.round_pass for c in engine.clues[:4]] == [1, 1, 1, 1]
+    assert [c.round_pass for c in engine.clues[4:]] == [2, 2, 2, 2]
 
 
 def test_voting_imposter_caught_wrong_final_guess_survivors_win() -> None:
-    engine, _, pids = _make_engine_with_players(4)
+    engine, pids = _make_engine_with_players(4)
     engine.start_round()
     engine.begin_clue_round()
     for speaker_id in list(engine.speaking_order):
@@ -149,30 +147,24 @@ def test_voting_imposter_caught_wrong_final_guess_survivors_win() -> None:
     assert imposter_id is not None
     survivors = [pid for pid in pids if pid != imposter_id]
 
-    # Self-vote is forbidden
     with pytest.raises(GameRuleError, match="cannot vote for yourself"):
         engine.cast_vote(survivors[0], survivors[0])
 
-    # 3 survivors vote for the Imposter; Imposter votes for survivor[0]
     for s_id in survivors:
         engine.cast_vote(s_id, imposter_id)
 
-    # Duplicate vote is forbidden
     with pytest.raises(GameRuleError, match="already cast"):
         engine.cast_vote(survivors[0], survivors[1])
 
     engine.cast_vote(imposter_id, survivors[0])
 
-    # All votes cast -> transitions to FINAL_GUESS because Imposter had majority
     assert engine.phase == GamePhase.FINAL_GUESS
     assert engine.accused_player_id == imposter_id
     assert engine.matrix.state == GhostMatrixState.IMPOSTER_DISCOVERED
 
-    # Non-imposter cannot submit final guess
     with pytest.raises(GameRuleError, match="Only the discovered Imposter"):
         engine.submit_final_guess(survivors[0], "Vampire")
 
-    # Imposter guesses wrong -> Survivors win (+1 point each for accurate voters)
     outcome = engine.submit_final_guess(imposter_id, "TotallyWrongWord999")
     assert engine.phase == GamePhase.RESULTS
     assert outcome.winner == WinnerSide.SURVIVORS
@@ -185,7 +177,7 @@ def test_voting_imposter_caught_wrong_final_guess_survivors_win() -> None:
 
 
 def test_voting_imposter_caught_correct_final_guess_or_synonym_imposter_wins() -> None:
-    engine, _, pids = _make_engine_with_players(4)
+    engine, pids = _make_engine_with_players(4)
     engine.selected_category = "Horror Creatures"
     engine.start_round()
     engine.begin_clue_round()
@@ -204,7 +196,6 @@ def test_voting_imposter_caught_correct_final_guess_or_synonym_imposter_wins() -
     assert engine.phase == GamePhase.FINAL_GUESS
     assert engine.active_word_entry is not None
 
-    # Guess with different casing and leading article ("the ...")
     guess_str = f"  the {engine.active_word_entry.word.lower()}! "
     outcome = engine.submit_final_guess(imposter_id, guess_str)
 
@@ -218,7 +209,7 @@ def test_voting_imposter_caught_correct_final_guess_or_synonym_imposter_wins() -
 
 
 def test_voting_tie_triggers_runoff_and_second_tie_lets_imposter_escape() -> None:
-    engine, _, pids = _make_engine_with_players(4)
+    engine, pids = _make_engine_with_players(4)
     engine.start_round()
     engine.begin_clue_round()
     for speaker_id in list(engine.speaking_order):
@@ -226,7 +217,6 @@ def test_voting_tie_triggers_runoff_and_second_tie_lets_imposter_escape() -> Non
     engine.begin_voting()
 
     p0, p1, p2, p3 = pids
-    # 2 votes for p0, 2 votes for p1 -> tie!
     engine.cast_vote(p0, p1)
     engine.cast_vote(p2, p1)
     engine.cast_vote(p1, p0)
@@ -236,11 +226,9 @@ def test_voting_tie_triggers_runoff_and_second_tie_lets_imposter_escape() -> Non
     assert set(engine.runoff_candidates) == {p0, p1}
     assert engine.matrix.state == GhostMatrixState.RUNOFF
 
-    # Voting for someone not in runoff is rejected
     with pytest.raises(GameRuleError, match="tied candidates"):
         engine.cast_vote(p0, p2)
 
-    # Tie again in runoff -> Imposter escapes and wins!
     engine.cast_vote(p0, p1)
     engine.cast_vote(p2, p1)
     engine.cast_vote(p1, p0)
@@ -254,8 +242,8 @@ def test_voting_tie_triggers_runoff_and_second_tie_lets_imposter_escape() -> Non
     assert engine.players[engine.imposter_id].score == 2  # type: ignore[index]
 
 
-def test_Disconnect_and_reconnect_and_timer_expiration() -> None:
-    engine, clock, pids = _make_engine_with_players(4)
+def test_disconnect_and_reconnect_and_host_skip() -> None:
+    engine, pids = _make_engine_with_players(4)
     p0_session = engine.players[pids[0]]
     saved_token = p0_session.reconnect_token
 
@@ -265,10 +253,9 @@ def test_Disconnect_and_reconnect_and_timer_expiration() -> None:
     current = engine.current_speaker_id
     assert current is not None
 
-    # Advance clock past clue timeout -> automatically skips speaker
-    clock.advance(60.0)
-    assert engine.check_and_advance_expired_timer() is True
-    assert engine.clues[0].clue == "[Silence]"
+    # Host can skip an inactive speaker without relying on a countdown timer
+    engine.skip_current_speaker()
+    assert engine.clues[0].clue == "[Skipped]"
 
     # Disconnect and reconnect using token
     engine.disconnect_player(pids[0])

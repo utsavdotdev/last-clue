@@ -13,10 +13,7 @@ export const RulesModal: React.FC<RulesModalProps> = ({ open, onClose }) => {
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="rules-title">
       <div className="modal-sheet">
         <div className="modal-header">
-          <div>
-            <span className="mono-tag">PARANORMAL FIELD MANUAL</span>
-            <h2 id="rules-title" className="section-title">How to Play The Last Clue</h2>
-          </div>
+          <h2 id="rules-title" className="section-title">How to Play</h2>
           <button
             type="button"
             className="icon-btn"
@@ -29,45 +26,41 @@ export const RulesModal: React.FC<RulesModalProps> = ({ open, onClose }) => {
 
         <div className="rules-grid">
           <div className="rule-item">
-            <span className="mono-step">01 / SECRET ROLES</span>
+            <span className="mono-step">1. DRAW CARDS</span>
             <p>
-              4 to 10 players join on the same Wi-Fi network. Every <strong>Survivor</strong> receives
-              the exact same secret horror word. Exactly one player is the <strong>Imposter</strong>,
-              who sees only the category name and must blend in.
+              Everyone gets the same secret horror word except one player: the{" "}
+              <strong>Imposter</strong>, who only sees the category.
             </p>
           </div>
 
           <div className="rule-item">
-            <span className="mono-step">02 / ONE CLUE EACH</span>
+            <span className="mono-step">2. GIVE CLUES</span>
             <p>
-              Players speak in a randomized turn order. Submit one short clue (up to 40 characters)
-              proving you know the secret word without giving it away to the Imposter.
+              Take turns giving one short clue related to the secret word. Be subtle so the
+              Imposter cannot guess it.
             </p>
           </div>
 
           <div className="rule-item">
-            <span className="mono-step">03 / DISCUSSION &amp; SECRET VOTE</span>
+            <span className="mono-step">3. VOTE OR PLAY ANOTHER ROUND</span>
             <p>
-              Debate the clues before the timer runs out, then cast one secret ballot. You cannot
-              vote for yourself. If the top suspects tie, a single runoff vote is held between the
-              tied players. If the runoff ties again, no one is caught and the Imposter escapes.
+              After everyone gives a clue, choose <strong>Start Voting</strong> or{" "}
+              <strong>Another Clue Round</strong> until you are ready to accuse.
             </p>
           </div>
 
           <div className="rule-item">
-            <span className="mono-step">04 / THE LAST CLUE &amp; SCORING</span>
+            <span className="mono-step">4. THE LAST CLUE</span>
             <p>
-              If the group catches the Imposter, the Imposter gets <strong>one final guess</strong> at
-              the secret word. If they guess right (or escape the vote), the Imposter wins and earns{" "}
-              <strong>+2 points</strong>. If their final guess is wrong, Survivors win and every
-              Survivor who voted for the Imposter earns <strong>+1 point</strong>.
+              If caught, the Imposter gets one final guess at the secret word to steal the win
+              (+2 pts). Otherwise Survivors win (+1 pt per correct vote).
             </p>
           </div>
         </div>
 
         <div className="modal-footer">
-          <button type="button" className="btn btn-primary" onClick={onClose}>
-            Understood
+          <button type="button" className="btn btn-primary full-width" onClick={onClose}>
+            Got It
           </button>
         </div>
       </div>

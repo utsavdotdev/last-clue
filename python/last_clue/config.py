@@ -22,10 +22,6 @@ class Settings:
     llm_model: str = "Qwen3.5-0.8B-Q4_0"
     llm_timeout_seconds: float = 25.0
     ai_enabled: bool = True
-    discussion_seconds: int = 60
-    voting_seconds: int = 45
-    clue_timeout_seconds: int = 45
-    final_guess_seconds: int = 35
     static_dir: Path = STATIC_DIR
 
 
@@ -50,31 +46,6 @@ def load_settings() -> Settings:
     ai_enabled_raw = os.environ.get("LAST_CLUE_AI_ENABLED", "true").strip().lower()
     ai_enabled = ai_enabled_raw not in {"0", "false", "no", "off"}
 
-    discussion_seconds = _int_range(
-        os.environ.get("LAST_CLUE_DISCUSSION_SECONDS", "60"),
-        10,
-        300,
-        "LAST_CLUE_DISCUSSION_SECONDS",
-    )
-    voting_seconds = _int_range(
-        os.environ.get("LAST_CLUE_VOTING_SECONDS", "45"),
-        10,
-        300,
-        "LAST_CLUE_VOTING_SECONDS",
-    )
-    clue_timeout_seconds = _int_range(
-        os.environ.get("LAST_CLUE_CLUE_TIMEOUT_SECONDS", "45"),
-        10,
-        300,
-        "LAST_CLUE_CLUE_TIMEOUT_SECONDS",
-    )
-    final_guess_seconds = _int_range(
-        os.environ.get("LAST_CLUE_FINAL_GUESS_SECONDS", "35"),
-        10,
-        180,
-        "LAST_CLUE_FINAL_GUESS_SECONDS",
-    )
-
     return Settings(
         host=host,
         port=port,
@@ -83,10 +54,6 @@ def load_settings() -> Settings:
         llm_model=llm_model,
         llm_timeout_seconds=llm_timeout,
         ai_enabled=ai_enabled,
-        discussion_seconds=discussion_seconds,
-        voting_seconds=voting_seconds,
-        clue_timeout_seconds=clue_timeout_seconds,
-        final_guess_seconds=final_guess_seconds,
         static_dir=STATIC_DIR,
     )
 

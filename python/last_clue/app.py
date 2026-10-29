@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
 import json
 import logging
 from pathlib import Path
@@ -57,33 +56,10 @@ def create_app(
         room_code=room_code,
     )
 
-    @asynccontextmanager
-    async def lifespan(_app: FastAPI):
-        stop_event = asyncio.Event()
-
-        async def _timer_worker() -> None:
-            while not stop_event.is_set():
-                try:
-                    await manager.tick_timers()
-                except Exception:
-                    logger.warning("Timer tick error", exc_info=True)
-                try:
-                    await asyncio.wait_for(stop_event.wait(), timeout=0.5)
-                except TimeoutError:
-                    pass
-
-        task = asyncio.create_task(_timer_worker())
-        try:
-            yield
-        finally:
-            stop_event.set()
-            task.cancel()
-
     app = FastAPI(
         title="The Last Clue",
         description="Haunted LAN Multiplayer Social-Deduction Game for Arduino UNO Q",
         version="1.0.0",
-        lifespan=lifespan,
     )
     app.state.settings = resolved_settings
     app.state.matrix = resolved_matrix
@@ -159,8 +135,6 @@ def create_app(
                 manager.engine.require_host(player_id=player_id, token=token)
                 manager.engine.update_settings(
                     selected_category=update.selected_category,
-                    discussion_seconds=update.discussion_seconds,
-                    voting_seconds=update.voting_seconds,
                     ai_enabled=update.ai_enabled,
                 )
             await manager.broadcast_state()

@@ -6,8 +6,6 @@ from dataclasses import dataclass
 import html
 import re
 import secrets
-import time
-from typing import Callable
 
 from last_clue.ai.service import HauntedAIService
 from last_clue.hardware.matrix_adapter import MatrixAdapter
@@ -81,7 +79,7 @@ def sanitize_clue_text(raw: str) -> str:
 
 
 class GameEngine:
-    """Authoritative state machine for one Last Clue game room."""
+    """Authoritative state machine for one Last Clue game room (player-paced, untimed)."""
 
     def __init__(
         self,
@@ -89,26 +87,17 @@ class GameEngine:
         room_code: str = "HAUNT6",
         matrix: MatrixAdapter | None = None,
         ai_service: HauntedAIService | None = None,
-        discussion_seconds: int = 60,
-        voting_seconds: int = 45,
-        clue_timeout_seconds: int = 45,
-        final_guess_seconds: int = 35,
-        clock: Callable[[], float] = time.monotonic,
         rng: secrets.SystemRandom | None = None,
     ) -> None:
         self.room_code = room_code.upper()
         self.matrix = matrix if matrix is not None else MatrixAdapter()
         self.ai_service = ai_service
-        self.discussion_seconds = discussion_seconds
-        self.voting_seconds = voting_seconds
-        self.clue_timeout_seconds = clue_timeout_seconds
-        self.final_guess_seconds = final_guess_seconds
-        self._clock = clock
         self._rng = rng if rng is not None else secrets.SystemRandom()
 
         self.host_token: str = secrets.token_urlsafe(18)
         self.phase: GamePhase = GamePhase.LOBBY
         self.round_number: int = 0
+        self.clue_round_number: int = 1
         self.players: dict[str, PlayerSession] = {}
         self.player_order: list[str] = []
 
@@ -116,7 +105,7 @@ class GameEngine:
         self.active_word_entry: WordEntry | None = None
         self.imposter_id: str | None = None
         self.round_intro: str = ""
-        self.narration: str = "Gather 4 to 10 investigators in the lobby to begin the ritual."
+        self.narration: str = "Waiting for players to join."
 
         self.speaking_order: list[str] = []
         self.current_speaker_index: int = 0
@@ -128,8 +117,6 @@ class GameEngine:
         self.imposter_final_guess: str | None = None
         self.outcome: RoundOutcomeView | None = None
 
-        self.phase_deadline: float | None = None
-        self.phase_total_seconds: int | None = None
         self._used_words: set[str] = set()
 
         self.matrix.set_state(GhostMatrixState.LOBBY)
@@ -238,21 +225,11 @@ class GameEngine:
         self,
         *,
         selected_category: str | None = None,
-        discussion_seconds: int | None = None,
-        voting_seconds: int | None = None,
         ai_enabled: bool | None = None,
     ) -> None:
         if selected_category is not None:
             cat = selected_category.strip()
             self.selected_category = None if cat.lower() in {"", "any", "random"} else cat
-        if discussion_seconds is not None:
-            if not 10 <= discussion_seconds <= 300:
-                raise GameRuleError("Discussion timer must be between 10 and 300 seconds.")
-            self.discussion_seconds = discussion_seconds
-        if voting_seconds is not None:
-            if not 10 <= voting_seconds <= 300:
-                raise GameRuleError("Voting timer must be between 10 and 300 seconds.")
-            self.voting_seconds = voting_seconds
         if ai_enabled is not None and self.ai_service is not None:
             self.ai_service.set_enabled(ai_enabled)
 
@@ -272,6 +249,7 @@ class GameEngine:
             raise GameRuleError(f"Maximum {MAX_PLAYERS} players allowed.")
 
         self.round_number += 1
+        self.clue_round_number = 1
         extra_words = self.ai_service.custom_words if self.ai_service is not None else []
         candidates = entries_for_category(self.selected_category, extra_entries=extra_words)
         unused = [w for w in candidates if w.word.casefold() not in self._used_words]
@@ -325,10 +303,9 @@ class GameEngine:
                 "The circle is sealed and the lantern grows dim. "
                 "One among you does not know the secret word."
             )
-            self.narration = "Inspect your private dossier in silence."
+            self.narration = "Tap and hold your card to view your secret role."
 
         self.phase = GamePhase.ROLE_REVEAL
-        self._set_timer(None)
         self.matrix.set_state(GhostMatrixState.ROLES_ASSIGNED)
 
     def mark_role_acknowledged(self, player_id: str) -> None:
@@ -350,16 +327,32 @@ class GameEngine:
     def begin_clue_round(self) -> None:
         if self.phase != GamePhase.ROLE_REVEAL:
             raise GameRuleError("Clue round can only start after Role Reveal.")
+        self.clue_round_number = 1
+        for pid in self.speaking_order:
+            self.players[pid].submitted_clue = None
         self.phase = GamePhase.CLUE_ROUND
         self.current_speaker_index = 0
         self._skip_disconnected_speakers()
         if self.phase == GamePhase.CLUE_ROUND:
-            self._set_timer(self.clue_timeout_seconds)
             self.narration = (
                 self.ai_service.get_narration("clue_phase")
                 if self.ai_service is not None
-                else "The spirits are listening. One of you does not know the word."
+                else "Give one short clue when your turn arrives."
             )
+            self.matrix.set_state(GhostMatrixState.CLUE_PHASE)
+
+    def start_another_clue_round(self) -> None:
+        """Start an additional clue pass so every player can give another clue before voting."""
+        if self.phase != GamePhase.DISCUSSION:
+            raise GameRuleError("Another clue round can only start after the current clue round finishes.")
+        self.clue_round_number += 1
+        for pid in self.speaking_order:
+            self.players[pid].submitted_clue = None
+        self.phase = GamePhase.CLUE_ROUND
+        self.current_speaker_index = 0
+        self._skip_disconnected_speakers()
+        if self.phase == GamePhase.CLUE_ROUND:
+            self.narration = f"Clue Round {self.clue_round_number}. Each player gives another clue."
             self.matrix.set_state(GhostMatrixState.CLUE_PHASE)
 
     @property
@@ -377,7 +370,7 @@ class GameEngine:
         if player is None or player.role is None:
             raise GameRuleError("You are not an active participant in this round.")
         if player.submitted_clue is not None:
-            raise GameRuleError("You have already submitted a clue this round.")
+            raise GameRuleError("You have already submitted a clue in this clue round.")
         if self.current_speaker_id != player_id:
             raise GameRuleError("Wait for your turn to submit a clue.")
 
@@ -388,6 +381,7 @@ class GameEngine:
             nickname=player.nickname,
             clue=cleaned_clue,
             turn_index=len(self.clues) + 1,
+            round_pass=self.clue_round_number,
         )
         self.clues.append(submission)
         self.current_speaker_index += 1
@@ -395,7 +389,7 @@ class GameEngine:
         return submission
 
     def skip_current_speaker(self) -> None:
-        """Host or timer skip when the current speaker disconnects or times out."""
+        """Host skip when the current speaker disconnects or is away."""
         if self.phase != GamePhase.CLUE_ROUND:
             raise GameRuleError("Not in Clue Round.")
         speaker_id = self.current_speaker_id
@@ -404,13 +398,14 @@ class GameEngine:
             return
         speaker = self.players[speaker_id]
         if speaker.submitted_clue is None:
-            speaker.submitted_clue = "[Silence]"
+            speaker.submitted_clue = "[Skipped]"
             self.clues.append(
                 ClueSubmission(
                     player_id=speaker_id,
                     nickname=speaker.nickname,
-                    clue="[Silence]",
+                    clue="[Skipped]",
                     turn_index=len(self.clues) + 1,
+                    round_pass=self.clue_round_number,
                 )
             )
         self.current_speaker_index += 1
@@ -430,6 +425,7 @@ class GameEngine:
                         nickname=speaker.nickname,
                         clue="[Disconnected]",
                         turn_index=len(self.clues) + 1,
+                        round_pass=self.clue_round_number,
                     )
                 )
             self.current_speaker_index += 1
@@ -438,31 +434,27 @@ class GameEngine:
         self._skip_disconnected_speakers()
         if self.current_speaker_index >= len(self.speaking_order):
             self._begin_discussion()
-        else:
-            self._set_timer(self.clue_timeout_seconds)
 
     def _begin_discussion(self) -> None:
         self.phase = GamePhase.DISCUSSION
-        self._set_timer(self.discussion_seconds)
         self.narration = (
             self.ai_service.get_narration("clues_finished")
             if self.ai_service is not None
-            else "All clues have been spoken. Question every alibi before voting begins."
+            else "All clues are in. Start voting or play another clue round."
         )
         self.matrix.set_state(GhostMatrixState.CLUE_PHASE)
 
     def begin_voting(self) -> None:
         if self.phase != GamePhase.DISCUSSION:
-            raise GameRuleError("Voting can only begin from the Discussion phase.")
+            raise GameRuleError("Voting can only begin after clues are submitted.")
         self.phase = GamePhase.VOTING
         self.votes = {}
         for p in self.players.values():
             p.voted_for = None
-        self._set_timer(self.voting_seconds)
         self.narration = (
             self.ai_service.get_narration("voting_start")
             if self.ai_service is not None
-            else "Cast your secret vote now. You cannot vote for yourself."
+            else "Vote secretly for who you think the Imposter is."
         )
         self.matrix.set_state(GhostMatrixState.VOTING_PHASE)
 
@@ -502,18 +494,16 @@ class GameEngine:
         if self.phase not in {GamePhase.VOTING, GamePhase.RUNOFF}:
             raise GameRuleError("Cannot tally votes outside Voting or Runoff phase.")
 
-        # Only count votes from connected players or already-submitted valid ballots
         tallies: dict[str, int] = {pid: 0 for pid in self.speaking_order}
         if self.phase == GamePhase.RUNOFF:
             tallies = {pid: 0 for pid in self.runoff_candidates}
 
-        for voter_id, target_id in self.votes.items():
+        for _voter_id, target_id in self.votes.items():
             if target_id in tallies:
                 tallies[target_id] += 1
 
         max_votes = max(tallies.values()) if tallies else 0
         if max_votes == 0:
-            # No votes cast at all -> Imposter escapes
             self._complete_round(
                 winner=WinnerSide.IMPOSTER,
                 reason=(
@@ -533,11 +523,10 @@ class GameEngine:
             self.accused_player_id = accused_id
             if accused_id == self.imposter_id:
                 self.phase = GamePhase.FINAL_GUESS
-                self._set_timer(self.final_guess_seconds)
                 self.narration = (
                     self.ai_service.get_narration("imposter_discovered")
                     if self.ai_service is not None
-                    else "The Imposter has been caught. They get one final guess at the secret word."
+                    else "The Imposter was caught! One final guess at the secret word."
                 )
                 self.matrix.set_state(GhostMatrixState.IMPOSTER_DISCOVERED)
             else:
@@ -556,11 +545,10 @@ class GameEngine:
             self.votes = {}
             for p in self.players.values():
                 p.voted_for = None
-            self._set_timer(self.voting_seconds)
             self.narration = (
                 self.ai_service.get_narration("runoff_start")
                 if self.ai_service is not None
-                else "Tie vote detected. Cast one runoff ballot between the tied suspects."
+                else "Tie vote! Vote between the tied players."
             )
             self.matrix.set_state(GhostMatrixState.RUNOFF)
         else:
@@ -652,14 +640,14 @@ class GameEngine:
             )
         elif reason == WinReason.IMPOSTER_ESCAPED_RUNOFF_TIE:
             summary = (
-                f"The runoff vote ended in a deadlock. {imposter_name} slipped into the dark "
+                f"The runoff vote ended in a tie. {imposter_name} escaped "
                 f"while the secret word was '{self.active_word_entry.word}'."
             )
         else:
             if accused_name:
                 summary = (
-                    f"The circle wrongly accused {accused_name}. "
-                    f"The true Imposter was {imposter_name}."
+                    f"The group accused {accused_name}. "
+                    f"The real Imposter was {imposter_name}."
                 )
             else:
                 summary = f"No suspect was convicted. The Imposter {imposter_name} escaped."
@@ -681,25 +669,25 @@ class GameEngine:
             summary_text=summary,
         )
         self.phase = GamePhase.RESULTS
-        self._set_timer(None)
 
         if winner == WinnerSide.SURVIVORS:
             self.narration = (
                 self.ai_service.get_narration("survivors_win")
                 if self.ai_service is not None
-                else "The Survivors exposed the deception and endured the night."
+                else "Survivors win!"
             )
             self.matrix.set_state(GhostMatrixState.SURVIVORS_WIN)
         else:
             self.narration = (
                 self.ai_service.get_narration("imposter_wins")
                 if self.ai_service is not None
-                else "Deceit triumphs in the dark. The Imposter wins the round."
+                else "The Imposter wins!"
             )
             self.matrix.set_state(GhostMatrixState.IMPOSTER_WINS)
 
     def return_to_lobby(self) -> None:
         self.phase = GamePhase.LOBBY
+        self.clue_round_number = 1
         self.active_word_entry = None
         self.imposter_id = None
         self.speaking_order = []
@@ -710,7 +698,6 @@ class GameEngine:
         self.accused_player_id = None
         self.imposter_final_guess = None
         self.outcome = None
-        self._set_timer(None)
         for p in self.players.values():
             p.role = None
             p.ready_in_reveal = False
@@ -722,54 +709,6 @@ class GameEngine:
     def reset_scores(self) -> None:
         for p in self.players.values():
             p.score = 0
-
-    # --- Server Timer Management ---
-
-    def _set_timer(self, seconds: int | None) -> None:
-        if seconds is None:
-            self.phase_deadline = None
-            self.phase_total_seconds = None
-        else:
-            self.phase_total_seconds = seconds
-            self.phase_deadline = self._clock() + float(seconds)
-
-    def timer_remaining(self) -> int | None:
-        if self.phase_deadline is None:
-            return None
-        remaining = int(round(self.phase_deadline - self._clock()))
-        return max(0, remaining)
-
-    def check_and_advance_expired_timer(self) -> bool:
-        """Advance the state machine if the active phase timer has expired. Returns True if changed."""
-        if self.phase_deadline is None:
-            return False
-        if self._clock() < self.phase_deadline:
-            return False
-
-        if self.phase == GamePhase.CLUE_ROUND:
-            self.skip_current_speaker()
-            return True
-        if self.phase == GamePhase.DISCUSSION:
-            self.begin_voting()
-            return True
-        if self.phase in {GamePhase.VOTING, GamePhase.RUNOFF}:
-            self.finalize_voting()
-            return True
-        if self.phase == GamePhase.FINAL_GUESS:
-            tallies: dict[str, int] = {pid: 0 for pid in self.speaking_order}
-            for target_id in self.votes.values():
-                if target_id in tallies:
-                    tallies[target_id] += 1
-            self._complete_round(
-                winner=WinnerSide.SURVIVORS,
-                reason=WinReason.IMPOSTER_CAUGHT_WRONG_GUESS,
-                accused_id=self.accused_player_id,
-                vote_counts=tallies,
-                imposter_guess="[Timed out]",
-                guessed_correctly=False,
-            )
-            return True
-        return False
 
     # --- Public & Private State Projections (Zero Secret Leakage) ---
 
@@ -804,6 +743,7 @@ class GameEngine:
             room_code=self.room_code,
             phase=self.phase,
             round_number=self.round_number,
+            clue_round_number=self.clue_round_number,
             min_players=MIN_PLAYERS,
             max_players=MAX_PLAYERS,
             players=players_view,
@@ -822,10 +762,6 @@ class GameEngine:
             accused_player_id=self.accused_player_id,
             votes_cast_count=len(self.votes),
             eligible_voters_count=len(self.eligible_voter_ids()),
-            timer_seconds_remaining=self.timer_remaining(),
-            timer_total_seconds=self.phase_total_seconds,
-            discussion_seconds=self.discussion_seconds,
-            voting_seconds=self.voting_seconds,
             outcome=self.outcome if self.phase == GamePhase.RESULTS else None,
             ai_status=ai_view,
             matrix=self.matrix.snapshot(),

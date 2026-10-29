@@ -7,7 +7,7 @@ from last_clue.app import create_app
 from last_clue.config import Settings
 
 
-def test_full_multiplayer_round_over_websockets_with_four_clients() -> None:
+def test_full_multiplayer_round_with_another_clue_round_over_websockets() -> None:
     settings = Settings(host="127.0.0.1", port=8765, ai_enabled=False)
     app = create_app(settings, room_code="SPOOKY")
 
@@ -31,7 +31,6 @@ def test_full_multiplayer_round_over_websockets_with_four_clients() -> None:
         assert players[0]["is_host"] is True
         assert all(not p["is_host"] for p in players[1:])
 
-        # Connect 4 WebSocket clients simultaneously
         with (
             client.websocket_connect(
                 f"/ws?player_id={players[0]['player_id']}&token={players[0]['reconnect_token']}"
@@ -53,7 +52,6 @@ def test_full_multiplayer_round_over_websockets_with_four_clients() -> None:
                 players[3]["player_id"]: ws3,
             }
 
-            # Drain initial sync messages
             for ws in sockets.values():
                 init_msg = ws.receive_json()
                 assert init_msg["type"] == "state_sync"
@@ -91,10 +89,11 @@ def test_full_multiplayer_round_over_websockets_with_four_clients() -> None:
             assert imposter_id is not None
             assert secret_word is not None
 
-            # Host transitions to Clue Round
+            # Host transitions to Clue Round 1
             ws0.send_json({"type": "begin_clue_round"})
             state = client.get("/api/state").json()["public"]
             assert state["phase"] == "CLUE_ROUND"
+            assert state["clue_round_number"] == 1
 
             for speaker_id in state["speaking_order"]:
                 sockets[speaker_id].send_json(
@@ -105,7 +104,22 @@ def test_full_multiplayer_round_over_websockets_with_four_clients() -> None:
             assert state["phase"] == "DISCUSSION"
             assert len(state["clues"]) == 4
 
-            # Host advances from Discussion to Voting
+            # Host chooses "Another Clue Round" -> Clue Round 2
+            ws0.send_json({"type": "another_clue_round"})
+            state = client.get("/api/state").json()["public"]
+            assert state["phase"] == "CLUE_ROUND"
+            assert state["clue_round_number"] == 2
+
+            for speaker_id in state["speaking_order"]:
+                sockets[speaker_id].send_json(
+                    {"type": "submit_clue", "clue": "Silver stake"}
+                )
+
+            state = client.get("/api/state").json()["public"]
+            assert state["phase"] == "DISCUSSION"
+            assert len(state["clues"]) == 8
+
+            # Host chooses "Start Voting"
             ws0.send_json({"type": "begin_voting"})
             state = client.get("/api/state").json()["public"]
             assert state["phase"] == "VOTING"
@@ -178,7 +192,6 @@ def test_serves_compiled_frontend_and_imposter_escape_path() -> None:
 
             ws0.send_json({"type": "begin_voting"})
 
-            # Find a Survivor to wrongly accuse so the Imposter escapes
             imposter_id = app.state.room_manager.engine.imposter_id
             innocent_id = next(p["player_id"] for p in players if p["player_id"] != imposter_id)
 

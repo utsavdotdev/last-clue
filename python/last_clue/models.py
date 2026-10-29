@@ -68,6 +68,7 @@ class ClueSubmission(BaseModel):
     nickname: str
     clue: str
     turn_index: int
+    round_pass: int = 1
 
 
 class PublicPlayerView(BaseModel):
@@ -119,6 +120,7 @@ class PublicGameState(BaseModel):
     room_code: str
     phase: GamePhase
     round_number: int
+    clue_round_number: int = 1
     min_players: int = 4
     max_players: int = 10
     players: list[PublicPlayerView]
@@ -135,10 +137,6 @@ class PublicGameState(BaseModel):
     accused_player_id: str | None = None
     votes_cast_count: int = 0
     eligible_voters_count: int = 0
-    timer_seconds_remaining: int | None = None
-    timer_total_seconds: int | None = None
-    discussion_seconds: int = 60
-    voting_seconds: int = 45
     outcome: RoundOutcomeView | None = None
     ai_status: AIStatusView
     matrix: MatrixPreviewView
@@ -174,6 +172,4 @@ class JoinRoomResponse(BaseModel):
 
 class HostSettingsUpdate(BaseModel):
     selected_category: str | None = None
-    discussion_seconds: int | None = None
-    voting_seconds: int | None = None
     ai_enabled: bool | None = None
