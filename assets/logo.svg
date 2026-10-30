@@ -1,7 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 72 72" role="img" aria-labelledby="logo-title logo-desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="logo-title logo-desc">
   <title id="logo-title">The Last Clue</title>
-  <desc id="logo-desc">A sheet ghost with two navy eyes and a red mouth.</desc>
-  <g id="ghost-mark">
+  <desc id="logo-desc">A sheet ghost on a rounded white square with a navy frame.</desc>
+  <rect
+    id="plate"
+    x="3"
+    y="3"
+    width="58"
+    height="58"
+    rx="14"
+    fill="#ffffff"
+    stroke="#00142f"
+    stroke-width="3"
+  />
+  <g id="ghost-mark" transform="translate(7.2 6.4) scale(0.69)">
     <path
       fill="#ffffff"
       stroke="#00142f"
