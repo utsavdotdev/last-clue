@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { soundCues } from "../services/sound";
 import type { PublicGameState } from "../types/game";
 
 interface HostSettingsPanelProps {
@@ -19,9 +20,13 @@ export const HostSettingsPanel: React.FC<HostSettingsPanelProps> = ({
 }) => {
   const [aiCategory, setAiCategory] = useState("Haunted Relics");
   const [summoning, setSummoning] = useState(false);
-  const [aiFeedback, setAiFeedback] = useState<string | null>(null);
+  const [aiFeedback, setAiFeedback] = useState<{
+    text: string;
+    ok: boolean;
+  } | null>(null);
 
   const handleSummonWords = async () => {
+    soundCues.playTap();
     setSummoning(true);
     setAiFeedback(null);
     try {
@@ -35,15 +40,25 @@ export const HostSettingsPanel: React.FC<HostSettingsPanelProps> = ({
       );
       const data = await resp.json();
       if (!resp.ok) {
-        setAiFeedback(data.detail || "Using built-in word packs.");
+        setAiFeedback({
+          text: data.detail || "Using built-in word packs.",
+          ok: false,
+        });
       } else {
         const words = (data.generated || [])
           .map((w: { word: string }) => w.word)
           .join(", ");
-        setAiFeedback(`Added AI words: ${words}`);
+        soundCues.playCopy();
+        setAiFeedback({
+          text: `Added words: ${words}`,
+          ok: true,
+        });
       }
     } catch {
-      setAiFeedback("Using built-in word packs.");
+      setAiFeedback({
+        text: "Using built-in word packs.",
+        ok: false,
+      });
     } finally {
       setSummoning(false);
     }
@@ -52,7 +67,7 @@ export const HostSettingsPanel: React.FC<HostSettingsPanelProps> = ({
   return (
     <div className="host-settings-group">
       <div className="config-list">
-        <div className="config-item">
+        <div className="config-item-stack">
           <label htmlFor="host-category-select" className="config-label">
             Category
           </label>
@@ -74,7 +89,7 @@ export const HostSettingsPanel: React.FC<HostSettingsPanelProps> = ({
         </div>
 
         <div className="config-item">
-          <div>
+          <div className="config-copy">
             <span className="config-label">Local UNO Q AI</span>
             <span className="field-hint">{game.ai_status.detail}</span>
           </div>
@@ -116,7 +131,15 @@ export const HostSettingsPanel: React.FC<HostSettingsPanelProps> = ({
               {summoning ? "Adding..." : "Generate"}
             </button>
           </div>
-          {aiFeedback && <p className="field-hint">{aiFeedback}</p>}
+          {aiFeedback && (
+            <p
+              className={
+                aiFeedback.ok ? "feedback-note is-ok" : "feedback-note"
+              }
+            >
+              {aiFeedback.text}
+            </p>
+          )}
         </div>
       )}
     </div>

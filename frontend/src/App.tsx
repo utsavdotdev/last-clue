@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowsClockwise,
   BookOpen,
@@ -47,6 +47,41 @@ function avatarColor(index: number): string {
   return AVATAR_PALETTE[index % AVATAR_PALETTE.length];
 }
 
+/**
+ * Copy text to clipboard across both HTTPS and plain HTTP LAN URLs
+ * (e.g. http://192.168.x.x:8765 on Arduino UNO Q where navigator.clipboard is undefined).
+ */
+async function copyTextReliable(text: string): Promise<boolean> {
+  if (!text) return false;
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall through to textarea execCommand fallback
+  }
+
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "-9999px";
+    ta.style.left = "-9999px";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const copied = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
 export const App: React.FC = () => {
   const urlRoomParam = React.useMemo(() => {
     if (typeof window === "undefined") return null;
@@ -59,7 +94,6 @@ export const App: React.FC = () => {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return null;
       const parsed = JSON.parse(raw) as StoredCredentials;
-      // If user opened a QR link for a different room code, clear stale session so they join the scanned room
       if (urlRoomParam && parsed.room_code.toUpperCase() !== urlRoomParam) {
         localStorage.removeItem(STORAGE_KEY);
         return null;
@@ -75,9 +109,7 @@ export const App: React.FC = () => {
   const [networkInfo, setNetworkInfo] = useState<NetworkInfo | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
 
-  const [entryMode, setEntryMode] = useState<"join" | "host">(() =>
-    urlRoomParam ? "join" : "join"
-  );
+  const [entryMode, setEntryMode] = useState<"join" | "host">("join");
   const [nicknameInput, setNicknameInput] = useState("");
   const [roomCodeInput, setRoomCodeInput] = useState(urlRoomParam || "");
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
@@ -85,8 +117,9 @@ export const App: React.FC = () => {
 
   const [rulesOpen, setRulesOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [soundEnabled, setSoundEnabled] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const [copiedUrl, setCopiedUrl] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
   const [customHostIp, setCustomHostIp] = useState("");
   const [editingIp, setEditingIp] = useState(false);
 
@@ -96,6 +129,11 @@ export const App: React.FC = () => {
   const [clueDraft, setClueDraft] = useState("");
   const [selectedVoteTarget, setSelectedVoteTarget] = useState<string | null>(null);
   const [finalGuessDraft, setFinalGuessDraft] = useState("");
+
+  // Track previous counts/turns for sound cues
+  const prevPlayerCountRef = useRef<number>(0);
+  const prevClueCountRef = useRef<number>(0);
+  const prevSpeakerIdRef = useRef<string | null>(null);
 
   const fetchNetworkInfo = useCallback(
     async (roomOverride?: string, hostOverride?: string) => {
@@ -158,24 +196,71 @@ export const App: React.FC = () => {
     }
   }, [publicState?.room_code]);
 
-  // Reset phase-local UI state on phase transitions
+  // Phase transition sound effects and local state resets
   useEffect(() => {
     if (!publicState) return;
-    soundCues.playPhaseTransition();
     setSecretPeekOpen(false);
     if (publicState.phase === "ROLE_REVEAL") {
+      soundCues.playPhaseTransition();
       setCardRevealed(false);
       setClueDraft("");
       setSelectedVoteTarget(null);
       setFinalGuessDraft("");
+    } else if (publicState.phase === "CLUE_ROUND" || publicState.phase === "DISCUSSION") {
+      soundCues.playPhaseTransition();
     } else if (publicState.phase === "VOTING" || publicState.phase === "RUNOFF") {
+      soundCues.playPhaseTransition();
       setSelectedVoteTarget(null);
     } else if (publicState.phase === "FINAL_GUESS") {
       soundCues.playAccusation();
+    } else if (publicState.phase === "RESULTS") {
+      if (publicState.outcome?.winner === "SURVIVORS") {
+        soundCues.playVictorySurvivors();
+      } else {
+        soundCues.playVictoryImposter();
+      }
     }
   }, [publicState?.phase, publicState?.round_number, publicState?.clue_round_number]);
 
-  const wsRef = React.useRef<WebSocket | null>(null);
+  // Player join, clue submitted, and active turn sound cues
+  useEffect(() => {
+    if (!publicState) return;
+    const connectedNow = publicState.players.filter((p) => p.connected).length;
+    if (
+      publicState.phase === "LOBBY" &&
+      prevPlayerCountRef.current > 0 &&
+      connectedNow > prevPlayerCountRef.current
+    ) {
+      soundCues.playPlayerJoin();
+    }
+    prevPlayerCountRef.current = connectedNow;
+
+    if (
+      publicState.phase === "CLUE_ROUND" &&
+      publicState.clues.length > prevClueCountRef.current
+    ) {
+      soundCues.playClueSubmitted();
+    }
+    prevClueCountRef.current = publicState.clues.length;
+
+    if (
+      publicState.phase === "CLUE_ROUND" &&
+      publicState.current_speaker_id &&
+      publicState.current_speaker_id !== prevSpeakerIdRef.current &&
+      publicState.current_speaker_id === credentials?.player_id
+    ) {
+      soundCues.playYourTurn();
+    }
+    prevSpeakerIdRef.current = publicState.current_speaker_id;
+  }, [
+    credentials?.player_id,
+    publicState?.clues.length,
+    publicState?.current_speaker_id,
+    publicState?.phase,
+    publicState?.players,
+  ]);
+
+  const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     let socket: WebSocket | null = null;
@@ -245,6 +330,7 @@ export const App: React.FC = () => {
 
   const handleJoinOrCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    soundCues.playTap();
     setErrorBanner(null);
     const trimmedName = nicknameInput.trim();
     if (!trimmedName) {
@@ -262,7 +348,9 @@ export const App: React.FC = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           nickname: trimmedName,
-          room_code: asHost ? undefined : roomCodeInput.trim().toUpperCase() || undefined,
+          room_code: asHost
+            ? undefined
+            : roomCodeInput.trim().toUpperCase() || undefined,
           as_host: asHost,
           create_new_room: createNewRoom,
         }),
@@ -272,6 +360,7 @@ export const App: React.FC = () => {
         setErrorBanner(data.detail || "Could not join the room.");
         return;
       }
+      soundCues.playPlayerJoin();
       const creds: StoredCredentials = {
         player_id: data.player_id,
         nickname: data.nickname,
@@ -294,13 +383,13 @@ export const App: React.FC = () => {
 
   const handleGenerateNewRoom = async () => {
     if (!credentials) return;
+    soundCues.playTap();
     setErrorBanner(null);
     try {
       const newResp = await fetch("/api/room/new", { method: "POST" });
       if (!newResp.ok) return;
       const netData = (await newResp.json()) as NetworkInfo;
       setNetworkInfo(netData);
-      // Re-join host automatically into the new room
       const joinResp = await fetch("/api/join", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -329,6 +418,7 @@ export const App: React.FC = () => {
   };
 
   const handleLeaveRoom = () => {
+    soundCues.playTap();
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: "leave_room" }));
     }
@@ -344,14 +434,25 @@ export const App: React.FC = () => {
     if (next) soundCues.playTap();
   };
 
+  const handleCopyRoomCode = async () => {
+    const code = publicState?.room_code || activeRoomCode;
+    const ok = await copyTextReliable(code);
+    if (ok) {
+      soundCues.playCopy();
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 2000);
+    }
+  };
+
   const handleCopyJoinUrl = async () => {
-    if (!networkInfo) return;
-    try {
-      await navigator.clipboard.writeText(networkInfo.join_url);
+    const urlToCopy =
+      networkInfo?.join_url ||
+      `${window.location.origin}/?room=${publicState?.room_code || activeRoomCode}`;
+    const ok = await copyTextReliable(urlToCopy);
+    if (ok) {
+      soundCues.playCopy();
       setCopiedUrl(true);
       setTimeout(() => setCopiedUrl(false), 2000);
-    } catch {
-      // Fallback selection
     }
   };
 
@@ -365,7 +466,11 @@ export const App: React.FC = () => {
   const playerMap = new Map(players.map((p) => [p.player_id, p]));
   const playerIndexMap = new Map(players.map((p, i) => [p.player_id, i]));
   const connectedCount = players.filter((p) => p.connected).length;
-  const activeRoomCode = publicState?.room_code || networkInfo?.room_code || roomCodeInput || "HAUNT6";
+  const activeRoomCode =
+    publicState?.room_code ||
+    networkInfo?.room_code ||
+    roomCodeInput ||
+    "HAUNT6";
 
   return (
     <div className="app-root">
@@ -381,7 +486,10 @@ export const App: React.FC = () => {
             <button
               type="button"
               className="circle-icon-btn"
-              onClick={() => setSettingsOpen(true)}
+              onClick={() => {
+                soundCues.playTap();
+                setSettingsOpen(true);
+              }}
               aria-label="UNO Q Matrix and Settings"
               title="UNO Q Matrix and Settings"
             >
@@ -405,7 +513,10 @@ export const App: React.FC = () => {
             <button
               type="button"
               className="circle-icon-btn"
-              onClick={() => setRulesOpen(true)}
+              onClick={() => {
+                soundCues.playTap();
+                setRulesOpen(true);
+              }}
               aria-label="How to Play"
               title="How to Play"
             >
@@ -464,7 +575,10 @@ export const App: React.FC = () => {
                   className={
                     entryMode === "join" ? "mode-card active" : "mode-card"
                   }
-                  onClick={() => setEntryMode("join")}
+                  onClick={() => {
+                    soundCues.playTap();
+                    setEntryMode("join");
+                  }}
                 >
                   <span className="mode-card-top">
                     <Users size={20} weight="bold" />
@@ -479,7 +593,10 @@ export const App: React.FC = () => {
                   className={
                     entryMode === "host" ? "mode-card active" : "mode-card"
                   }
-                  onClick={() => setEntryMode("host")}
+                  onClick={() => {
+                    soundCues.playTap();
+                    setEntryMode("host");
+                  }}
                 >
                   <span className="mode-card-top">
                     <WifiHigh size={20} weight="bold" />
@@ -549,17 +666,33 @@ export const App: React.FC = () => {
                   <GhostMascot mood="calm" size={64} />
                   <h1 className="lobby-invite-title">Invite Players</h1>
 
-                  {/* 6-Digit Room Code Tiles */}
-                  <div
-                    className="lobby-code-digits"
-                    aria-label={`Room code ${publicState.room_code}`}
+                  {/* Interactive 6-Digit Room Code Tiles (Click to Copy Room Code) */}
+                  <button
+                    type="button"
+                    className="lobby-code-button"
+                    onClick={() => void handleCopyRoomCode()}
+                    aria-label={`Copy room code ${publicState.room_code}`}
+                    title="Tap to copy room code"
                   >
-                    {publicState.room_code.split("").map((char, idx) => (
-                      <span key={idx} className="lobby-code-digit">
-                        {char}
-                      </span>
-                    ))}
-                  </div>
+                    <div className="lobby-code-digits">
+                      {publicState.room_code.split("").map((char, idx) => (
+                        <span key={idx} className="lobby-code-digit">
+                          {char}
+                        </span>
+                      ))}
+                    </div>
+                    <span className="copy-code-caption">
+                      {copiedCode ? (
+                        <>
+                          <Check size={14} weight="bold" /> Room Code Copied!
+                        </>
+                      ) : (
+                        <>
+                          <Copy size={14} weight="bold" /> Tap code to copy
+                        </>
+                      )}
+                    </span>
+                  </button>
 
                   {/* Scannable Backend-Generated QR Code */}
                   {networkInfo && (
@@ -579,10 +712,10 @@ export const App: React.FC = () => {
                       <button
                         type="button"
                         className="lobby-link-pill"
-                        onClick={handleCopyJoinUrl}
+                        onClick={() => void handleCopyJoinUrl()}
                       >
                         <span className="lobby-link-text">
-                          {copiedUrl ? "Link Copied!" : networkInfo.join_url}
+                          {copiedUrl ? "Join Link Copied!" : networkInfo.join_url}
                         </span>
                         {copiedUrl ? (
                           <Check size={16} weight="bold" />
@@ -611,6 +744,7 @@ export const App: React.FC = () => {
                               type="button"
                               className="pill-btn pill-btn-secondary pill-btn-inline"
                               onClick={() => {
+                                soundCues.playTap();
                                 void fetchNetworkInfo(
                                   publicState.room_code,
                                   customHostIp
@@ -628,7 +762,10 @@ export const App: React.FC = () => {
                         <button
                           type="button"
                           className="underline-btn"
-                          onClick={() => setEditingIp((v) => !v)}
+                          onClick={() => {
+                            soundCues.playTap();
+                            setEditingIp((v) => !v);
+                          }}
                         >
                           {editingIp ? "Hide IP setting" : "Change Wi-Fi IP"}
                         </button>
@@ -649,7 +786,7 @@ export const App: React.FC = () => {
                   {isHost && (
                     <div className="lobby-config">
                       <div className="lobby-config-divider" />
-                      <div className="config-item full-width">
+                      <div className="config-item-stack">
                         <label
                           htmlFor="lobby-category-select"
                           className="config-label"
@@ -775,7 +912,11 @@ export const App: React.FC = () => {
                   <button
                     type="button"
                     className={cardRevealed ? "role-card revealed" : "role-card"}
-                    onClick={() => setCardRevealed((v) => !v)}
+                    onClick={() => {
+                      const next = !cardRevealed;
+                      soundCues.playCardFlip(next);
+                      setCardRevealed(next);
+                    }}
                     aria-expanded={cardRevealed}
                   >
                     <div className="role-card-under">
@@ -863,7 +1004,6 @@ export const App: React.FC = () => {
             {/* SCREEN 5: CLUE SUBMISSION */}
             {currentPhase === "CLUE_ROUND" && publicState && (
               <section className="phase-screen has-sticky-footer">
-                {/* Secret Word / Role Reminder Bar */}
                 {privateState && (
                   <div
                     className={
@@ -888,7 +1028,11 @@ export const App: React.FC = () => {
                     <button
                       type="button"
                       className="circle-icon-btn"
-                      onClick={() => setSecretPeekOpen((v) => !v)}
+                      onClick={() => {
+                        const next = !secretPeekOpen;
+                        soundCues.playCardFlip(next);
+                        setSecretPeekOpen(next);
+                      }}
                       aria-label={
                         secretPeekOpen ? "Hide secret card" : "Peek secret card"
                       }
@@ -902,7 +1046,6 @@ export const App: React.FC = () => {
                   </div>
                 )}
 
-                {/* Active Turn Input or Waiting Prompt */}
                 {publicState.current_speaker_id === credentials.player_id ? (
                   <form
                     className="turn-input-block"
@@ -942,13 +1085,10 @@ export const App: React.FC = () => {
                         ?.nickname || "Player"}
                       ’s Turn
                     </h1>
-                    <p className="stage-subtext">
-                      Waiting for their clue...
-                    </p>
+                    <p className="stage-subtext">Waiting for their clue...</p>
                   </div>
                 )}
 
-                {/* Speaking Order & Clues List */}
                 <div className="online-panel">
                   <div className="online-panel-head">
                     <span className="online-panel-label">Clues</span>
@@ -1170,7 +1310,10 @@ export const App: React.FC = () => {
                                         ? "player-row vote-row is-active"
                                         : "player-row vote-row"
                                     }
-                                    onClick={() => setSelectedVoteTarget(pid)}
+                                    onClick={() => {
+                                      soundCues.playTap();
+                                      setSelectedVoteTarget(pid);
+                                    }}
                                   >
                                     <span
                                       className="player-avatar"
@@ -1220,10 +1363,18 @@ export const App: React.FC = () => {
                         disabled={!selectedVoteTarget}
                         onClick={() => {
                           if (!selectedVoteTarget) return;
-                          sendWsAction({
-                            type: "cast_vote",
-                            target_id: selectedVoteTarget,
-                          });
+                          soundCues.playVoteLocked();
+                          if (
+                            wsRef.current &&
+                            wsRef.current.readyState === WebSocket.OPEN
+                          ) {
+                            wsRef.current.send(
+                              JSON.stringify({
+                                type: "cast_vote",
+                                target_id: selectedVoteTarget,
+                              })
+                            );
+                          }
                         }}
                       >
                         Submit Vote
@@ -1356,7 +1507,6 @@ export const App: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Leaderboard & Clues Summary */}
                 <div className="online-panel">
                   <div className="online-panel-head">
                     <span className="online-panel-label">Leaderboard</span>

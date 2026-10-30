@@ -20,7 +20,7 @@ class Settings:
     log_level: str = "INFO"
     llm_url: str = "http://llamacpp-models-runner:9999/v1/chat/completions"
     llm_model: str = "Qwen3.5-0.8B-Q4_0"
-    llm_timeout_seconds: float = 25.0
+    llm_timeout_seconds: float = 90.0
     ai_enabled: bool = True
     static_dir: Path = STATIC_DIR
 
@@ -38,7 +38,7 @@ def load_settings() -> Settings:
     ).strip()
     llm_model = os.environ.get("LAST_CLUE_LLM_MODEL", "Qwen3.5-0.8B-Q4_0").strip() or "Qwen3.5-0.8B-Q4_0"
     llm_timeout = _float_range(
-        os.environ.get("LAST_CLUE_LLM_TIMEOUT", "25"),
+        os.environ.get("LAST_CLUE_LLM_TIMEOUT", "90"),
         0.5,
         300.0,
         "LAST_CLUE_LLM_TIMEOUT",

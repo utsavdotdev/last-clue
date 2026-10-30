@@ -3,16 +3,37 @@
 from __future__ import annotations
 
 import logging
+import secrets
 import threading
 from last_clue.ai.fallback_provider import FallbackHorrorProvider
 from last_clue.ai.local_provider import (
     LlamaServerClient,
     LocalHorrorProvider,
     is_local_model_url,
+    sanitize_dashes,
 )
 from last_clue.models import AIStatusState, AIStatusView, WordEntry
+from last_clue.word_packs import BUNDLED_WORD_PACKS, normalize_guess_text
 
 logger = logging.getLogger(__name__)
+_RNG = secrets.SystemRandom()
+
+# Extra thematic horror words used as an instant local fallback pool when the
+# on-board model is still warming up or unreachable, so "Generate" always succeeds.
+FALLBACK_EXTRA_WORDS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("Bone Key", "Haunted Relics", ("skeleton key", "bone lock")),
+    ("Weeping Statue", "Haunted Relics", ("stone angel", "crying statue")),
+    ("Iron Coffin", "Haunted Relics", ("casket", "sarcophagus")),
+    ("Plague Mask", "Haunted Relics", ("beak mask", "doctor mask")),
+    ("Black Candle", "Haunted Relics", ("ritual candle", "wax candle")),
+    ("Silver Dagger", "Haunted Relics", ("ritual blade", "silver knife")),
+    ("Music Box", "Haunted Relics", ("windup box", "lullaby box")),
+    ("Cracked Pendulum", "Haunted Relics", ("clock pendulum", "hypnosis pendulum")),
+    ("Mothman", "Horror Creatures", ("winged cryptid", "red eyed moth")),
+    ("Wendigo", "Horror Creatures", ("forest spirit", "antlered beast")),
+    ("Shadow Person", "Supernatural Events", ("hat man", "corner shadow")),
+    ("Bell Tower", "Haunted Locations", ("belfry", "church tower")),
+)
 
 
 class HauntedAIService:
@@ -23,7 +44,7 @@ class HauntedAIService:
         *,
         llm_url: str,
         llm_model: str,
-        timeout_seconds: float = 25.0,
+        timeout_seconds: float = 90.0,
         enabled: bool = True,
         hardware_connected: bool = False,
         local_provider: LocalHorrorProvider | None = None,
@@ -43,12 +64,12 @@ class HauntedAIService:
             )
         )
         self._status: AIStatusState = (
-            AIStatusState.FALLBACK if not enabled else AIStatusState.FALLBACK
+            AIStatusState.DISABLED if not enabled else AIStatusState.FALLBACK
         )
         self._detail: str = (
-            "AI disabled by host - using built-in content"
+            "AI disabled by host"
             if not enabled
-            else "AI standby - using built-in content until local model responds"
+            else "Ready (built-in packs active; local model on standby)"
         )
         self._custom_words: list[WordEntry] = []
         self._intro_cache: dict[str, list[str]] = {}
@@ -91,10 +112,10 @@ class HauntedAIService:
             self.enabled = enabled
             if not enabled:
                 self._status = AIStatusState.DISABLED
-                self._detail = "AI disabled by host - using built-in content"
+                self._detail = "AI disabled - using built-in packs"
             elif self._status == AIStatusState.DISABLED:
                 self._status = AIStatusState.FALLBACK
-                self._detail = "AI enabled - awaiting next local inference"
+                self._detail = "AI enabled - ready for generation"
 
     def status_view(self) -> AIStatusView:
         with self._lock:
@@ -138,7 +159,7 @@ class HauntedAIService:
                         continue
 
             self._status = AIStatusState.GENERATING
-            self._detail = f"Generating intro with local {self.llm_model}..."
+            self._detail = f"Generating with {self.llm_model}..."
 
         try:
             intro = self._local.generate_round_intro(
@@ -173,8 +194,35 @@ class HauntedAIService:
                 self._detail = "AI unavailable - using built-in content"
             return self._fallback.get_narration(event_key)
 
-    def generate_custom_words(self, category: str = "Haunted Relics", count: int = 3) -> list[WordEntry]:
-        """Synchronously request and validate a candidate word pack from the local model."""
+    def _fallback_custom_words(self, category: str, count: int) -> list[WordEntry]:
+        clean_cat = sanitize_dashes(category.strip() or "Haunted Relics")[:36]
+        with self._lock:
+            existing_pool = list(BUNDLED_WORD_PACKS) + list(self._custom_words)
+        seen = {normalize_guess_text(item.word) for item in existing_pool}
+        available = [
+             WordEntry(
+                word=w,
+                category=clean_cat,
+                difficulty="medium",
+                synonyms=list(syns),
+                source="ai",
+            )
+            for w, _default_cat, syns in FALLBACK_EXTRA_WORDS
+            if normalize_guess_text(w) not in seen
+        ]
+        if not available:
+            return []
+        _RNG.shuffle(available)
+        return available[: max(1, count)]
+
+    def generate_custom_words(
+        self,
+        category: str = "Haunted Relics",
+        count: int = 3,
+        *,
+        allow_fallback: bool = True,
+    ) -> list[WordEntry]:
+        """Request and validate a candidate word pack from the local model (with instant fallback)."""
         if not self.enabled:
             raise RuntimeError("Local AI is disabled in host settings")
         if not is_local_model_url(self.llm_url):
@@ -182,7 +230,7 @@ class HauntedAIService:
 
         with self._lock:
             self._status = AIStatusState.GENERATING
-            self._detail = f"Summoning candidate words from {self.llm_model}..."
+            self._detail = f"Generating words with {self.llm_model}..."
             existing = list(self._custom_words)
 
         try:
@@ -194,10 +242,19 @@ class HauntedAIService:
             with self._lock:
                 self._custom_words.extend(entries)
                 self._status = AIStatusState.READY
-                self._detail = f"Local AI active ({self.llm_model}) - {len(self._custom_words)} AI words cached"
+                self._detail = f"Local AI active ({len(self._custom_words)} words saved)"
             return entries
         except Exception as exc:
+            logger.info("Local AI word pack call fell back (%s)", exc)
+            if allow_fallback:
+                fallback_entries = self._fallback_custom_words(category, count)
+                if fallback_entries:
+                    with self._lock:
+                        self._custom_words.extend(fallback_entries)
+                        self._status = AIStatusState.FALLBACK
+                        self._detail = f"Using built-in reserve ({len(self._custom_words)} words saved)"
+                    return fallback_entries
             with self._lock:
                 self._status = AIStatusState.FALLBACK
-                self._detail = "AI unavailable - using built-in content"
+                self._detail = "Using built-in content"
             raise RuntimeError(f"AI word generation failed validation or timed out: {exc}") from exc

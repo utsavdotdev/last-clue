@@ -14,6 +14,19 @@ const ALL_STATES: { id: GhostMatrixState; label: string }[] = [
   { id: "IDLE", label: "Idle" },
 ];
 
+const SHORT_STATE_LABELS: Record<GhostMatrixState, string> = {
+  BOOT: "Booting",
+  LOBBY: "Lobby",
+  ROLES_ASSIGNED: "Roles Dealt",
+  CLUE_PHASE: "Clues",
+  VOTING_PHASE: "Voting",
+  RUNOFF: "Runoff",
+  IMPOSTER_DISCOVERED: "Imposter Caught",
+  SURVIVORS_WIN: "Survivors Win",
+  IMPOSTER_WINS: "Imposter Wins",
+  IDLE: "Idle",
+};
+
 interface MatrixVisualizerProps {
   matrix: MatrixPreviewView;
   canTestHardware?: boolean;
@@ -32,13 +45,15 @@ export const MatrixVisualizer: React.FC<MatrixVisualizerProps> = ({
 
   return (
     <div className="matrix-section" data-ui="true">
-      <div className="row-between">
+      <div className="matrix-head-row">
         <strong className="block-title">
           {matrix.hardware_connected
-            ? "Arduino UNO Q 8x13 LED Matrix"
-            : "8x13 LED Matrix Simulator"}
+            ? "UNO Q 8x13 LED Matrix"
+            : "8x13 LED Simulator"}
         </strong>
-        <span className="pill-tag">{matrix.label.split(":").pop()?.trim() || matrix.state}</span>
+        <span className="pill-tag">
+          {SHORT_STATE_LABELS[matrix.state] || matrix.state}
+        </span>
       </div>
 
       <div
