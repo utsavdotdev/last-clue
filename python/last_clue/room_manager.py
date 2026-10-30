@@ -14,7 +14,11 @@ from last_clue.config import Settings
 from last_clue.game_engine import GameEngine, GameRuleError, PlayerSession
 from last_clue.hardware.matrix_adapter import MatrixAdapter
 from last_clue.models import GhostMatrixState
-from last_clue.networking import detect_lan_ips, generate_qr_svg, primary_join_url
+from last_clue.networking import (
+    detect_lan_ips,
+    generate_qr_svg,
+    resolve_join_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +27,7 @@ RATE_LIMIT_WINDOW_SECONDS = 10.0
 
 
 class RoomManager:
-    """Coordinates a single active room on the UNO Q, managing WebSockets and state sync."""
+    """Coordinates the active room on the UNO Q, managing WebSockets and state sync."""
 
     def __init__(
         self,
@@ -33,7 +37,7 @@ class RoomManager:
         ai_service: HauntedAIService,
         room_code: str | None = None,
     ) -> None:
-        code = room_code or self._generate_room_code()
+        code = (room_code or self._generate_room_code()).upper()
         self.settings = settings
         self.matrix = matrix
         self.ai_service = ai_service
@@ -47,21 +51,60 @@ class RoomManager:
         self._observer_sockets: set[WebSocket] = set()
         self._invalid_counts: dict[str, list[float]] = {}
 
-    @staticmethod
-    def _generate_room_code() -> str:
+    @classmethod
+    def _generate_room_code(cls, exclude: str | None = None) -> str:
         alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
         rng = secrets.SystemRandom()
-        return "".join(rng.choice(alphabet) for _ in range(6))
+        for _ in range(20):
+            candidate = "".join(rng.choice(alphabet) for _ in range(6))
+            if exclude is None or candidate != exclude.upper():
+                return candidate
+        return "HAUNT9"
 
-    def network_info(self) -> dict[str, Any]:
+    def create_new_room_locked(self, custom_code: str | None = None) -> str:
+        """Reset the room to a brand-new room code and fresh lobby state."""
+        previous = self.engine.room_code
+        new_code = (
+            custom_code.strip().upper()
+            if custom_code and custom_code.strip()
+            else self._generate_room_code(exclude=previous)
+        )
+        self.engine = GameEngine(
+            room_code=new_code,
+            matrix=self.matrix,
+            ai_service=self.ai_service,
+        )
+        self._player_sockets.clear()
+        self._invalid_counts.clear()
+        return new_code
+
+    def network_info(
+        self,
+        *,
+        request_host: str | None = None,
+        preferred_host: str | None = None,
+        room_code: str | None = None,
+    ) -> dict[str, Any]:
+        target_room = (room_code or self.engine.room_code).strip().upper()
         ips = detect_lan_ips()
-        join_url = primary_join_url(self.settings.port, self.engine.room_code)
+        join_url, reachable, warning = resolve_join_url(
+            self.settings.port,
+            target_room,
+            request_host=request_host,
+            preferred_host=preferred_host,
+        )
+        qr_png_url = f"/api/qr.png?room={target_room}"
+        if preferred_host and preferred_host.strip():
+            qr_png_url += f"&host={preferred_host.strip()}"
         return {
-            "room_code": self.engine.room_code,
+            "room_code": target_room,
             "port": self.settings.port,
             "lan_ips": ips,
             "join_url": join_url,
+            "qr_png_url": qr_png_url,
             "qr_svg": generate_qr_svg(join_url),
+            "network_reachable": reachable,
+            "network_warning": warning,
             "hardware_connected": self.matrix.hardware_connected,
         }
 

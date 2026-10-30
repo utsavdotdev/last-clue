@@ -128,7 +128,10 @@ export interface NetworkInfo {
   port: number;
   lan_ips: string[];
   join_url: string;
+  qr_png_url: string;
   qr_svg: string;
+  network_reachable: boolean;
+  network_warning: string | null;
   hardware_connected: boolean;
 }
 

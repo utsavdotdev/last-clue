@@ -159,6 +159,7 @@ class JoinRoomRequest(BaseModel):
     room_code: str | None = None
     reconnect_token: str | None = None
     as_host: bool = False
+    create_new_room: bool = False
 
 
 class JoinRoomResponse(BaseModel):

@@ -1,5 +1,4 @@
 import React, { useState } from "react";
-import { Cpu, Sparkle } from "@phosphor-icons/react";
 import type { PublicGameState } from "../types/game";
 
 interface HostSettingsPanelProps {
@@ -38,8 +37,10 @@ export const HostSettingsPanel: React.FC<HostSettingsPanelProps> = ({
       if (!resp.ok) {
         setAiFeedback(data.detail || "Using built-in word packs.");
       } else {
-        const words = (data.generated || []).map((w: { word: string }) => w.word).join(", ");
-        setAiFeedback(`Added: ${words}`);
+        const words = (data.generated || [])
+          .map((w: { word: string }) => w.word)
+          .join(", ");
+        setAiFeedback(`Added AI words: ${words}`);
       }
     } catch {
       setAiFeedback("Using built-in word packs.");
@@ -49,19 +50,21 @@ export const HostSettingsPanel: React.FC<HostSettingsPanelProps> = ({
   };
 
   return (
-    <section className="host-settings-block" aria-label="Host Settings">
-      <div className="settings-form-grid">
-        <div className="form-field">
-          <label htmlFor="category-select">Category</label>
+    <div className="host-settings-group">
+      <div className="config-list">
+        <div className="config-item">
+          <label htmlFor="host-category-select" className="config-label">
+            Category
+          </label>
           <select
-            id="category-select"
-            className="input-control"
+            id="host-category-select"
+            className="select-input"
             value={game.selected_category || "random"}
             onChange={(e) =>
               onUpdateSettings({ selected_category: e.target.value })
             }
           >
-            <option value="random">Random Category</option>
+            <option value="random">Random Theme</option>
             {game.available_categories.map((cat) => (
               <option key={cat} value={cat}>
                 {cat}
@@ -70,53 +73,52 @@ export const HostSettingsPanel: React.FC<HostSettingsPanelProps> = ({
           </select>
         </div>
 
-        <div className="form-field">
-          <label htmlFor="ai-toggle">Local UNO Q AI</label>
-          <select
-            id="ai-toggle"
-            className="input-control"
-            value={game.ai_status.status === "DISABLED" ? "off" : "on"}
-            onChange={(e) =>
-              onUpdateSettings({ ai_enabled: e.target.value === "on" })
-            }
-          >
-            <option value="on">Enabled (Local AI + Fallback)</option>
-            <option value="off">Off (Built-in Packs Only)</option>
-          </select>
+        <div className="config-item">
+          <div>
+            <span className="config-label">Local UNO Q AI</span>
+            <span className="field-hint">{game.ai_status.detail}</span>
+          </div>
+          <label className="switch-toggle">
+            <input
+              type="checkbox"
+              checked={game.ai_status.status !== "DISABLED"}
+              onChange={(e) =>
+                onUpdateSettings({ ai_enabled: e.target.checked })
+              }
+              aria-label="Enable Local UNO Q AI"
+            />
+            <span className="switch-track" />
+          </label>
         </div>
       </div>
 
-      <div className="ai-wordpack-box">
-        <div className="row-between">
-          <span className="helper-label">
-            <Cpu size={14} style={{ verticalAlign: "middle", marginRight: 4 }} />
-            {game.ai_status.detail}
-          </span>
-          <span className="mono-badge">{game.ai_status.custom_words_count} AI words</span>
+      {game.ai_status.status !== "DISABLED" && (
+        <div className="custom-word-box">
+          <label htmlFor="ai-custom-cat" className="block-title">
+            Generate AI Words ({game.ai_status.custom_words_count} saved)
+          </label>
+          <div className="inline-field-row">
+            <input
+              id="ai-custom-cat"
+              type="text"
+              className="text-input"
+              maxLength={32}
+              value={aiCategory}
+              onChange={(e) => setAiCategory(e.target.value)}
+              placeholder="Theme name"
+            />
+            <button
+              type="button"
+              className="pill-btn pill-btn-secondary pill-btn-inline"
+              disabled={summoning}
+              onClick={handleSummonWords}
+            >
+              {summoning ? "Adding..." : "Generate"}
+            </button>
+          </div>
+          {aiFeedback && <p className="field-hint">{aiFeedback}</p>}
         </div>
-
-        <div className="inline-input-row" style={{ marginTop: "0.5rem" }}>
-          <input
-            id="ai-custom-cat"
-            type="text"
-            className="input-control"
-            maxLength={32}
-            value={aiCategory}
-            onChange={(e) => setAiCategory(e.target.value)}
-            placeholder="Custom AI theme..."
-          />
-          <button
-            type="button"
-            className="btn btn-secondary"
-            disabled={summoning || game.ai_status.status === "DISABLED"}
-            onClick={handleSummonWords}
-          >
-            <Sparkle size={16} />
-            {summoning ? "..." : "Add Words"}
-          </button>
-        </div>
-        {aiFeedback && <p className="helper-label">{aiFeedback}</p>}
-      </div>
-    </section>
+      )}
+    </div>
   );
 };

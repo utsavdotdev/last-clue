@@ -1,31 +1,29 @@
 import React from "react";
 import type { GhostMatrixState, MatrixPreviewView } from "../types/game";
 
-const ALL_STATES: GhostMatrixState[] = [
-  "BOOT",
-  "LOBBY",
-  "ROLES_ASSIGNED",
-  "CLUE_PHASE",
-  "VOTING_PHASE",
-  "RUNOFF",
-  "IMPOSTER_DISCOVERED",
-  "SURVIVORS_WIN",
-  "IMPOSTER_WINS",
-  "IDLE",
+const ALL_STATES: { id: GhostMatrixState; label: string }[] = [
+  { id: "BOOT", label: "Boot" },
+  { id: "LOBBY", label: "Lobby" },
+  { id: "ROLES_ASSIGNED", label: "Roles" },
+  { id: "CLUE_PHASE", label: "Clues" },
+  { id: "VOTING_PHASE", label: "Voting" },
+  { id: "RUNOFF", label: "Runoff" },
+  { id: "IMPOSTER_DISCOVERED", label: "Caught" },
+  { id: "SURVIVORS_WIN", label: "Survivors Win" },
+  { id: "IMPOSTER_WINS", label: "Imposter Wins" },
+  { id: "IDLE", label: "Idle" },
 ];
 
 interface MatrixVisualizerProps {
   matrix: MatrixPreviewView;
   canTestHardware?: boolean;
   onTriggerTestState?: (state: GhostMatrixState) => void;
-  compact?: boolean;
 }
 
 export const MatrixVisualizer: React.FC<MatrixVisualizerProps> = ({
   matrix,
   canTestHardware = false,
   onTriggerTestState,
-  compact = false,
 }) => {
   const pixels =
     matrix.pixels && matrix.pixels.length === 104
@@ -33,19 +31,18 @@ export const MatrixVisualizer: React.FC<MatrixVisualizerProps> = ({
       : Array<number>(104).fill(0);
 
   return (
-    <section
-      className={compact ? "matrix-compact-box" : "panel matrix-panel"}
-      aria-label="Arduino UNO Q 8x13 LED Matrix"
-    >
+    <div className="matrix-section" data-ui="true">
       <div className="row-between">
-        <span className="mono-tag">
-          {matrix.hardware_connected ? "UNO Q 8x13 LED MATRIX" : "8x13 LED PREVIEW"}
-        </span>
-        <span className="mono-badge">{matrix.state.replace(/_/g, " ")}</span>
+        <strong className="block-title">
+          {matrix.hardware_connected
+            ? "Arduino UNO Q 8x13 LED Matrix"
+            : "8x13 LED Matrix Simulator"}
+        </strong>
+        <span className="pill-tag">{matrix.label.split(":").pop()?.trim() || matrix.state}</span>
       </div>
 
       <div
-        className="led-grid-frame"
+        className="led-board"
         role="img"
         aria-label={`8 by 13 LED Matrix showing ${matrix.state}`}
       >
@@ -53,30 +50,33 @@ export const MatrixVisualizer: React.FC<MatrixVisualizerProps> = ({
           {pixels.map((lit, index) => (
             <span
               key={index}
-              className={lit ? "led-cell led-on" : "led-cell led-off"}
+              className={lit ? "led-dot led-dot-on" : "led-dot led-dot-off"}
             />
           ))}
         </div>
       </div>
 
       {canTestHardware && onTriggerTestState && (
-        <div className="matrix-test-bar">
-          <div className="matrix-state-pills">
+        <div className="matrix-controls">
+          <span className="field-hint">Tap to test state on UNO Q matrix:</span>
+          <div className="matrix-chip-row">
             {ALL_STATES.map((st) => (
               <button
-                key={st}
+                key={st.id}
                 type="button"
                 className={
-                  matrix.state === st ? "chip-btn chip-btn-active" : "chip-btn"
+                  matrix.state === st.id
+                    ? "state-chip state-chip-active"
+                    : "state-chip"
                 }
-                onClick={() => onTriggerTestState(st)}
+                onClick={() => onTriggerTestState(st.id)}
               >
-                {st.replace(/_/g, " ")}
+                {st.label}
               </button>
             ))}
           </div>
         </div>
       )}
-    </section>
+    </div>
   );
 };

@@ -1,4 +1,4 @@
-"""FastAPI application factory, REST endpoints, WebSocket handler, and static file serving."""
+"""FastAPI application factory, REST endpoints, QR endpoints, WebSocket handler, and static file serving."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from last_clue.ai.service import HauntedAIService
@@ -22,10 +22,22 @@ from last_clue.models import (
     JoinRoomRequest,
     JoinRoomResponse,
 )
-from last_clue.networking import primary_join_url
+from last_clue.networking import (
+    generate_qr_png,
+    generate_qr_svg,
+    primary_join_url,
+    resolve_join_url,
+)
 from last_clue.room_manager import RoomManager
 
 logger = logging.getLogger(__name__)
+
+
+def _request_host_header(request: Request) -> str | None:
+    forwarded = request.headers.get("x-forwarded-host")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.headers.get("host")
 
 
 def create_app(
@@ -77,8 +89,85 @@ def create_app(
         }
 
     @app.get("/api/network")
-    async def get_network_info() -> dict[str, Any]:
-        return manager.network_info()
+    async def get_network_info(
+        request: Request,
+        host: str | None = Query(default=None),
+        room: str | None = Query(default=None),
+    ) -> dict[str, Any]:
+        req_host = _request_host_header(request)
+        return manager.network_info(
+            request_host=req_host,
+            preferred_host=host,
+            room_code=room,
+        )
+
+    @app.get("/api/qr.png")
+    async def get_qr_png(
+        request: Request,
+        room: str | None = Query(default=None),
+        host: str | None = Query(default=None),
+    ) -> Response:
+        target_room = (room or manager.engine.room_code).strip().upper()
+        req_host = _request_host_header(request)
+        join_url, reachable, _ = resolve_join_url(
+            resolved_settings.port,
+            target_room,
+            request_host=req_host,
+            preferred_host=host,
+        )
+        png_bytes = generate_qr_png(join_url)
+        return Response(
+            content=png_bytes,
+            media_type="image/png",
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "X-Join-Url": join_url,
+                "X-Room-Code": target_room,
+                "X-Network-Reachable": "true" if reachable else "false",
+            },
+        )
+
+    @app.get("/api/qr.svg")
+    async def get_qr_svg(
+        request: Request,
+        room: str | None = Query(default=None),
+        host: str | None = Query(default=None),
+    ) -> Response:
+        target_room = (room or manager.engine.room_code).strip().upper()
+        req_host = _request_host_header(request)
+        join_url, reachable, _ = resolve_join_url(
+            resolved_settings.port,
+            target_room,
+            request_host=req_host,
+            preferred_host=host,
+        )
+        svg_text = generate_qr_svg(join_url)
+        return Response(
+            content=svg_text,
+            media_type="image/svg+xml",
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "X-Join-Url": join_url,
+                "X-Room-Code": target_room,
+                "X-Network-Reachable": "true" if reachable else "false",
+            },
+        )
+
+    @app.post("/api/room/new")
+    async def create_new_room(
+        request: Request,
+        room_code: str | None = Query(default=None),
+        host: str | None = Query(default=None),
+    ) -> dict[str, Any]:
+        async with manager._lock:
+            new_code = manager.create_new_room_locked(custom_code=room_code)
+        await manager.broadcast_state()
+        req_host = _request_host_header(request)
+        return manager.network_info(
+            request_host=req_host,
+            preferred_host=host,
+            room_code=new_code,
+        )
 
     @app.get("/api/state")
     async def get_public_state(
@@ -97,28 +186,42 @@ def create_app(
             return {"public": public, "private": private}
 
     @app.post("/api/join", response_model=JoinRoomResponse)
-    async def join_room(req: JoinRoomRequest) -> JoinRoomResponse:
-        if req.room_code and req.room_code.strip().upper() != manager.engine.room_code:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Room code '{req.room_code.strip().upper()}' does not match active room '{manager.engine.room_code}'.",
-            )
+    async def join_room(req: JoinRoomRequest, request: Request) -> JoinRoomResponse:
         try:
             async with manager._lock:
+                if req.as_host and req.create_new_room:
+                    manager.create_new_room_locked(custom_code=req.room_code)
+                elif (
+                    req.room_code
+                    and req.room_code.strip().upper() != manager.engine.room_code
+                ):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Room code '{req.room_code.strip().upper()}' does not match "
+                            f"active room '{manager.engine.room_code}'."
+                        ),
+                    )
                 session = manager.engine.join_player(
                     req.nickname,
                     reconnect_token=req.reconnect_token,
                     as_host=req.as_host,
                 )
+                active_code = manager.engine.room_code
             await manager.broadcast_state()
         except GameRuleError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        join_url = primary_join_url(resolved_settings.port, manager.engine.room_code)
+        req_host = _request_host_header(request)
+        join_url = primary_join_url(
+            resolved_settings.port,
+            active_code,
+            request_host=req_host,
+        )
         return JoinRoomResponse(
             player_id=session.player_id,
             nickname=session.nickname,
-            room_code=manager.engine.room_code,
+            room_code=active_code,
             reconnect_token=session.reconnect_token,
             is_host=session.is_host,
             join_url=join_url,
@@ -231,7 +334,7 @@ def create_app(
             content=(
                 "<!doctype html><html><head><meta charset='utf-8'>"
                 "<title>The Last Clue</title></head>"
-                "<body style='background:#0A0B0E;color:#EAE6DF;font-family:monospace;padding:2rem;'>"
+                "<body style='background:#f9fafb;color:#00142f;font-family:sans-serif;padding:2rem;'>"
                 "<h1>The Last Clue Server Active</h1>"
                 "<p>Run <code>./scripts/build.sh</code> to compile the frontend bundle.</p>"
                 "</body></html>"

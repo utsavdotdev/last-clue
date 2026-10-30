@@ -1,6 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
-  ArrowRight,
   ArrowsClockwise,
   BookOpen,
   Check,
@@ -8,15 +7,15 @@ import {
   Eye,
   EyeSlash,
   GearSix,
-  QrCode,
-  ShieldWarning,
   SignOut,
-  Skull,
   SpeakerHigh,
   SpeakerSlash,
-  WarningOctagon,
+  Users,
+  WarningCircle,
+  WifiHigh,
   X,
 } from "@phosphor-icons/react";
+import { GhostMascot } from "./components/GhostMascot";
 import { HostSettingsPanel } from "./components/HostSettingsPanel";
 import { MatrixVisualizer } from "./components/MatrixVisualizer";
 import { RulesModal } from "./components/RulesModal";
@@ -31,11 +30,41 @@ import type {
 
 const STORAGE_KEY = "last_clue_session_v1";
 
+const AVATAR_PALETTE = [
+  "#0070f3",
+  "#e11d38",
+  "#1f7a36",
+  "#c26d0b",
+  "#0d9488",
+  "#1d5fbf",
+  "#be123c",
+  "#15803d",
+  "#b45309",
+  "#0f766e",
+];
+
+function avatarColor(index: number): string {
+  return AVATAR_PALETTE[index % AVATAR_PALETTE.length];
+}
+
 export const App: React.FC = () => {
+  const urlRoomParam = React.useMemo(() => {
+    if (typeof window === "undefined") return null;
+    const raw = new URLSearchParams(window.location.search).get("room");
+    return raw ? raw.trim().toUpperCase() : null;
+  }, []);
+
   const [credentials, setCredentials] = useState<StoredCredentials | null>(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? (JSON.parse(raw) as StoredCredentials) : null;
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as StoredCredentials;
+      // If user opened a QR link for a different room code, clear stale session so they join the scanned room
+      if (urlRoomParam && parsed.room_code.toUpperCase() !== urlRoomParam) {
+        localStorage.removeItem(STORAGE_KEY);
+        return null;
+      }
+      return parsed;
     } catch {
       return null;
     }
@@ -46,69 +75,94 @@ export const App: React.FC = () => {
   const [networkInfo, setNetworkInfo] = useState<NetworkInfo | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
 
+  const [entryMode, setEntryMode] = useState<"join" | "host">(() =>
+    urlRoomParam ? "join" : "join"
+  );
   const [nicknameInput, setNicknameInput] = useState("");
-  const [roomCodeInput, setRoomCodeInput] = useState("");
+  const [roomCodeInput, setRoomCodeInput] = useState(urlRoomParam || "");
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
+  const [isSubmittingJoin, setIsSubmittingJoin] = useState(false);
 
   const [rulesOpen, setRulesOpen] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
-  const [qrOpen, setQrOpen] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
+  const [customHostIp, setCustomHostIp] = useState("");
+  const [editingIp, setEditingIp] = useState(false);
 
   // Gameplay local UI states
   const [cardRevealed, setCardRevealed] = useState(false);
-  const [peekWordOpen, setPeekWordOpen] = useState(false);
+  const [secretPeekOpen, setSecretPeekOpen] = useState(false);
   const [clueDraft, setClueDraft] = useState("");
   const [selectedVoteTarget, setSelectedVoteTarget] = useState<string | null>(null);
   const [finalGuessDraft, setFinalGuessDraft] = useState("");
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const roomParam = params.get("room");
-    if (roomParam) {
-      setRoomCodeInput(roomParam.toUpperCase());
-    }
-  }, []);
-
-  useEffect(() => {
-    const fetchInitial = async () => {
+  const fetchNetworkInfo = useCallback(
+    async (roomOverride?: string, hostOverride?: string) => {
       try {
-        const [netResp, stateResp] = await Promise.all([
-          fetch("/api/network"),
-          fetch(
-            credentials
-              ? `/api/state?player_id=${encodeURIComponent(
-                  credentials.player_id
-                )}&token=${encodeURIComponent(credentials.reconnect_token)}`
-              : "/api/state"
-          ),
-        ]);
+        const params = new URLSearchParams();
+        const targetRoom = roomOverride || publicState?.room_code || urlRoomParam;
+        if (targetRoom) params.set("room", targetRoom);
+        const hostVal = hostOverride !== undefined ? hostOverride : customHostIp;
+        if (hostVal.trim()) params.set("host", hostVal.trim());
+        const query = params.toString() ? `?${params.toString()}` : "";
+        const netResp = await fetch(`/api/network${query}`);
         if (netResp.ok) {
           const netData = (await netResp.json()) as NetworkInfo;
           setNetworkInfo(netData);
-          if (!roomCodeInput) {
+          if (!urlRoomParam && !roomCodeInput) {
             setRoomCodeInput(netData.room_code);
           }
         }
+      } catch {
+        // Handled by reconnect
+      }
+    },
+    [customHostIp, publicState?.room_code, roomCodeInput, urlRoomParam]
+  );
+
+  // Initial fetch of network info and public state
+  useEffect(() => {
+    const fetchInitial = async () => {
+      try {
+        const stateUrl = credentials
+          ? `/api/state?player_id=${encodeURIComponent(
+              credentials.player_id
+            )}&token=${encodeURIComponent(credentials.reconnect_token)}`
+          : "/api/state";
+        const stateResp = await fetch(stateUrl);
         if (stateResp.ok) {
           const stData = await stateResp.json();
           setPublicState(stData.public);
           if (stData.private) {
             setPrivateState(stData.private);
           }
+          await fetchNetworkInfo(stData.public?.room_code);
+        } else {
+          await fetchNetworkInfo();
         }
       } catch {
-        // Reconnect loop handles state
+        // Retry handled by WebSocket loop
       }
     };
     void fetchInitial();
   }, [credentials]);
 
+  // Keep QR and join URL synchronized whenever the active room_code changes
+  useEffect(() => {
+    if (publicState?.room_code) {
+      void fetchNetworkInfo(publicState.room_code);
+      if (!urlRoomParam) {
+        setRoomCodeInput(publicState.room_code);
+      }
+    }
+  }, [publicState?.room_code]);
+
+  // Reset phase-local UI state on phase transitions
   useEffect(() => {
     if (!publicState) return;
     soundCues.playPhaseTransition();
-    setPeekWordOpen(false);
+    setSecretPeekOpen(false);
     if (publicState.phase === "ROLE_REVEAL") {
       setCardRevealed(false);
       setClueDraft("");
@@ -185,29 +239,37 @@ export const App: React.FC = () => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(payload));
     } else {
-      setErrorBanner("Reconnecting... Try again in a moment.");
+      setErrorBanner("Reconnecting to room... Try again in a moment.");
     }
   };
 
-  const handleJoin = async (asHost: boolean) => {
+  const handleJoinOrCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
     setErrorBanner(null);
-    if (!nicknameInput.trim()) {
-      setErrorBanner("Enter your nickname first.");
+    const trimmedName = nicknameInput.trim();
+    if (!trimmedName) {
+      setErrorBanner("Please enter your name.");
       return;
     }
+
+    const asHost = entryMode === "host";
+    const createNewRoom = asHost && (publicState?.players.length ?? 0) === 0;
+    setIsSubmittingJoin(true);
+
     try {
       const resp = await fetch("/api/join", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          nickname: nicknameInput.trim(),
-          room_code: roomCodeInput.trim() || undefined,
+          nickname: trimmedName,
+          room_code: asHost ? undefined : roomCodeInput.trim().toUpperCase() || undefined,
           as_host: asHost,
+          create_new_room: createNewRoom,
         }),
       });
       const data = await resp.json();
       if (!resp.ok) {
-        setErrorBanner(data.detail || "Unable to join room.");
+        setErrorBanner(data.detail || "Could not join the room.");
         return;
       }
       const creds: StoredCredentials = {
@@ -219,8 +281,50 @@ export const App: React.FC = () => {
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(creds));
       setCredentials(creds);
+      if (window.location.search) {
+        window.history.replaceState({}, "", `/?room=${data.room_code}`);
+      }
+      await fetchNetworkInfo(data.room_code);
     } catch {
-      setErrorBanner("Network error while joining room.");
+      setErrorBanner("Network error while connecting to the server.");
+    } finally {
+      setIsSubmittingJoin(false);
+    }
+  };
+
+  const handleGenerateNewRoom = async () => {
+    if (!credentials) return;
+    setErrorBanner(null);
+    try {
+      const newResp = await fetch("/api/room/new", { method: "POST" });
+      if (!newResp.ok) return;
+      const netData = (await newResp.json()) as NetworkInfo;
+      setNetworkInfo(netData);
+      // Re-join host automatically into the new room
+      const joinResp = await fetch("/api/join", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nickname: credentials.nickname,
+          room_code: netData.room_code,
+          as_host: true,
+        }),
+      });
+      if (joinResp.ok) {
+        const joinData = await joinResp.json();
+        const creds: StoredCredentials = {
+          player_id: joinData.player_id,
+          nickname: joinData.nickname,
+          room_code: joinData.room_code,
+          reconnect_token: joinData.reconnect_token,
+          is_host: joinData.is_host,
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(creds));
+        setCredentials(creds);
+        window.history.replaceState({}, "", `/?room=${joinData.room_code}`);
+      }
+    } catch {
+      setErrorBanner("Could not create a new room code.");
     }
   };
 
@@ -247,7 +351,7 @@ export const App: React.FC = () => {
       setCopiedUrl(true);
       setTimeout(() => setCopiedUrl(false), 2000);
     } catch {
-      // Ignore clipboard failures on non-HTTPS LAN
+      // Fallback selection
     }
   };
 
@@ -257,420 +361,551 @@ export const App: React.FC = () => {
 
   const isHost = Boolean(privateState?.is_host || credentials?.is_host);
   const currentPhase = publicState?.phase || "LOBBY";
-  const playerMap = new Map(
-    (publicState?.players || []).map((p) => [p.player_id, p])
-  );
-  const connectedCount = (publicState?.players || []).filter((p) => p.connected).length;
+  const players = publicState?.players || [];
+  const playerMap = new Map(players.map((p) => [p.player_id, p]));
+  const playerIndexMap = new Map(players.map((p, i) => [p.player_id, i]));
+  const connectedCount = players.filter((p) => p.connected).length;
+  const activeRoomCode = publicState?.room_code || networkInfo?.room_code || roomCodeInput || "HAUNT6";
 
   return (
-    <div className="app-shell">
-      {/* Compact Party-Game Header */}
-      <header className="top-nav">
-        <div className="top-nav-inner">
-          <div className="brand-cluster">
-            <Skull size={20} weight="fill" className="brand-icon" />
-            <span className="brand-title">The Last Clue</span>
-            {publicState && (
-              <span className="room-pill">{publicState.room_code}</span>
-            )}
+    <div className="app-root">
+      <main className="game-column">
+        {/* Top Bar */}
+        <header className="room-header">
+          <div className="header-brand">
+            <span className="status-indicator" data-online={wsConnected} />
+            <span className="header-title-text">The Last Clue</span>
           </div>
 
-          <div className="nav-actions">
-            <span
-              className={wsConnected ? "status-dot dot-online" : "status-dot dot-offline"}
-              title={wsConnected ? "Connected" : "Reconnecting"}
-            />
-
-            {credentials && privateState?.role && currentPhase !== "LOBBY" && currentPhase !== "ROLE_REVEAL" && currentPhase !== "RESULTS" && (
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                onClick={() => setPeekWordOpen((v) => !v)}
-              >
-                <Eye size={15} />
-                <span>My Card</span>
-              </button>
-            )}
-
+          <div className="header-actions">
             <button
               type="button"
-              className="icon-btn"
-              onClick={() => setDrawerOpen(true)}
-              aria-label="UNO Q Matrix & Settings"
-              title="UNO Q Matrix & Settings"
+              className="circle-icon-btn"
+              onClick={() => setSettingsOpen(true)}
+              aria-label="UNO Q Matrix and Settings"
+              title="UNO Q Matrix and Settings"
             >
-              <GearSix size={18} />
+              <GearSix size={18} weight="bold" />
             </button>
 
             <button
               type="button"
-              className="icon-btn"
+              className="circle-icon-btn"
               onClick={toggleSound}
               aria-label={soundEnabled ? "Mute sound" : "Enable sound"}
+              title={soundEnabled ? "Sound on" : "Sound muted"}
             >
-              {soundEnabled ? <SpeakerHigh size={18} /> : <SpeakerSlash size={18} />}
+              {soundEnabled ? (
+                <SpeakerHigh size={18} weight="bold" />
+              ) : (
+                <SpeakerSlash size={18} weight="bold" />
+              )}
             </button>
 
             <button
               type="button"
-              className="icon-btn"
+              className="circle-icon-btn"
               onClick={() => setRulesOpen(true)}
               aria-label="How to Play"
               title="How to Play"
             >
-              <BookOpen size={18} />
+              <BookOpen size={18} weight="bold" />
             </button>
 
             {credentials && (
               <button
                 type="button"
-                className="icon-btn"
+                className="circle-icon-btn"
                 onClick={handleLeaveRoom}
                 aria-label="Leave room"
                 title="Leave room"
               >
-                <SignOut size={18} />
+                <SignOut size={18} weight="bold" />
               </button>
             )}
           </div>
-        </div>
-      </header>
+        </header>
 
-      {/* Centered Mobile-First Stage */}
-      <main className="party-container">
         {errorBanner && (
-          <div className="error-banner" role="alert">
-            <WarningOctagon size={18} />
+          <div className="alert-banner" role="alert">
+            <WarningCircle size={18} weight="fill" />
             <span>{errorBanner}</span>
             <button
               type="button"
-              className="error-dismiss"
+              className="alert-close"
               onClick={() => setErrorBanner(null)}
+              aria-label="Dismiss error"
             >
-              <X size={16} />
+              <X size={16} weight="bold" />
             </button>
           </div>
         )}
 
-        {/* Quick Peek Popover during Clue / Discussion / Voting */}
-        {peekWordOpen && privateState?.role && (
-          <div className="peek-card-banner">
-            <div>
-              <span className="mono-tag">{privateState.category}</span>
-              {privateState.role === "IMPOSTER" ? (
-                <strong className="danger-text">You are the IMPOSTER</strong>
-              ) : (
-                <strong>
-                  Word: <span className="cyan-text">{privateState.secret_word}</span>
-                </strong>
-              )}
-            </div>
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={() => setPeekWordOpen(false)}
-            >
-              Hide
-            </button>
-          </div>
-        )}
-
-        {/* SCREEN 1: JOIN / HOST SCREEN */}
+        {/* SCREEN 1 & 2: LANDING & CREATE / JOIN ROOM */}
         {!credentials ? (
-          <section className="card-screen">
-            <div className="hero-header">
-              <span className="mono-pill">MULTIPLAYER HORROR WORD GAME</span>
-              <h1 className="screen-title">Guess the Imposter</h1>
-              <p className="screen-subtitle">
-                Everyone gets the same secret horror word except one player. Give clues,
-                blend in, and expose the Imposter.
-              </p>
+          <section className="phase-screen">
+            <div className="hero-banner">
+              <GhostMascot mood="calm" size={72} />
+              <h1 className="hero-title">
+                <span className="hero-title-sub">Guess the</span>
+                <span className="hero-title-main">Imposter</span>
+              </h1>
             </div>
 
-            <form
-              className="stack-form"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void handleJoin(false);
-              }}
-            >
-              <div className="form-field">
-                <label htmlFor="nickname-input">Your Name</label>
-                <input
-                  id="nickname-input"
-                  type="text"
-                  className="input-control"
-                  maxLength={18}
-                  required
-                  autoFocus
-                  value={nicknameInput}
-                  onChange={(e) => setNicknameInput(e.target.value)}
-                  placeholder="Enter your name"
-                />
+            {urlRoomParam ? (
+              <div className="scanned-room-notice">
+                <span>Joining Room</span>
+                <strong>{urlRoomParam}</strong>
               </div>
-
-              <div className="form-field">
-                <label htmlFor="room-code-input">Room Code</label>
-                <input
-                  id="room-code-input"
-                  type="text"
-                  className="input-control mono-input"
-                  maxLength={8}
-                  value={roomCodeInput}
-                  onChange={(e) => setRoomCodeInput(e.target.value.toUpperCase())}
-                  placeholder={publicState?.room_code || "HAUNT6"}
-                />
-              </div>
-
-              <div className="action-stack">
-                <button type="submit" className="btn btn-primary full-width">
-                  <span>Join Game</span>
-                  <ArrowRight size={18} />
-                </button>
+            ) : (
+              <nav className="mode-switch" aria-label="Join or Host">
                 <button
                   type="button"
-                  className="btn btn-secondary full-width"
-                  onClick={() => void handleJoin(true)}
+                  className={
+                    entryMode === "join" ? "mode-card active" : "mode-card"
+                  }
+                  onClick={() => setEntryMode("join")}
                 >
-                  <span>Host Game</span>
-                </button>
-              </div>
-            </form>
-          </section>
-        ) : (
-          <>
-            {/* PHASE 1: LOBBY */}
-            {currentPhase === "LOBBY" && publicState && (
-              <section className="card-screen">
-                <div className="screen-top-row">
-                  <div>
-                    <span className="mono-tag">ROOM {publicState.room_code}</span>
-                    <h1 className="screen-title">Lobby</h1>
-                  </div>
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => setQrOpen((v) => !v)}
-                  >
-                    <QrCode size={16} />
-                    <span>{qrOpen ? "Hide QR" : "Invite QR"}</span>
-                  </button>
-                </div>
-
-                {qrOpen && networkInfo && (
-                  <div className="qr-invite-box">
-                    <div
-                      className="qr-svg-wrap"
-                      dangerouslySetInnerHTML={{ __html: networkInfo.qr_svg }}
-                    />
-                    <div className="qr-invite-meta">
-                      <code className="join-url-code">{networkInfo.join_url}</code>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        onClick={handleCopyJoinUrl}
-                      >
-                        <Copy size={14} />
-                        <span>{copiedUrl ? "Copied" : "Copy Link"}</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {isHost && (
-                  <div className="form-field">
-                    <label htmlFor="lobby-category">Theme</label>
-                    <select
-                      id="lobby-category"
-                      className="input-control"
-                      value={publicState.selected_category || "random"}
-                      onChange={(e) =>
-                        sendWsAction({
-                          type: "update_settings",
-                          selected_category: e.target.value,
-                        })
-                      }
-                    >
-                      <option value="random">Random Horror Theme</option>
-                      {publicState.available_categories.map((cat) => (
-                        <option key={cat} value={cat}>
-                          {cat}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-
-                <div className="section-block">
-                  <div className="row-between">
-                    <span className="field-label">
-                      Players ({connectedCount}/{publicState.max_players})
-                    </span>
-                    <span className="helper-label">Need {publicState.min_players}+ to start</span>
-                  </div>
-
-                  <ul className="player-list">
-                    {publicState.players.map((p) => (
-                      <li
-                        key={p.player_id}
-                        className={
-                          p.connected ? "player-chip" : "player-chip player-chip-offline"
-                        }
-                      >
-                        <span className="player-chip-name">
-                          {p.nickname}
-                          {p.player_id === credentials.player_id && " (You)"}
-                        </span>
-                        <div className="row-center gap-2">
-                          {p.is_host && <span className="host-tag">HOST</span>}
-                          {p.score > 0 && <span className="mono-score">{p.score} pts</span>}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                {isHost ? (
-                  <button
-                    type="button"
-                    className="btn btn-primary full-width"
-                    disabled={!publicState.host_ready}
-                    onClick={() => sendWsAction({ type: "start_round" })}
-                  >
-                    <span>
-                      {publicState.host_ready
-                        ? "Start Game"
-                        : `Waiting for ${Math.max(
-                            0,
-                            publicState.min_players - connectedCount
-                          )} more...`}
-                    </span>
-                    <ArrowRight size={18} />
-                  </button>
-                ) : (
-                  <div className="status-banner">Waiting for host to start the game...</div>
-                )}
-              </section>
-            )}
-
-            {/* PHASE 2: SECRET ROLE REVEAL (imposter.app style tap/hold card) */}
-            {currentPhase === "ROLE_REVEAL" && publicState && privateState && (
-              <section className="card-screen">
-                <div className="center-header">
-                  <span className="mono-pill">
-                    {privateState.category || publicState.active_category}
+                  <span className="mode-card-top">
+                    <Users size={20} weight="bold" />
+                    <span className="mode-radio" />
                   </span>
-                  <h1 className="screen-title">Your Secret Role</h1>
-                  <p className="screen-subtitle">
-                    Tap your card to reveal. Make sure no one else sees your screen.
-                  </p>
-                </div>
+                  <span className="mode-card-name">Join Room</span>
+                  <span className="mode-card-when">Enter code or scan QR</span>
+                </button>
 
                 <button
                   type="button"
                   className={
-                    cardRevealed
-                      ? privateState.role === "IMPOSTER"
-                        ? "tap-role-card tap-role-imposter"
-                        : "tap-role-card tap-role-survivor"
-                      : "tap-role-card tap-role-hidden"
+                    entryMode === "host" ? "mode-card active" : "mode-card"
                   }
-                  onClick={() => setCardRevealed((v) => !v)}
+                  onClick={() => setEntryMode("host")}
                 >
-                  {cardRevealed ? (
-                    <div className="tap-role-content">
-                      <span className="role-pill">
-                        {privateState.role === "IMPOSTER" ? (
-                          <>
-                            <ShieldWarning size={16} /> IMPOSTER
-                          </>
-                        ) : (
-                          <>
-                            <Check size={16} /> SURVIVOR
-                          </>
-                        )}
-                      </span>
-
-                      {privateState.role === "SURVIVOR" ? (
-                        <>
-                          <span className="helper-label">SECRET WORD</span>
-                          <div className="hero-word">{privateState.secret_word}</div>
-                          <span className="tap-hint">Tap card to hide</span>
-                        </>
-                      ) : (
-                        <>
-                          <div className="hero-word imposter-word">BLUFF</div>
-                          <p className="imposter-short-hint">
-                            You do not know the secret word. Use the category (
-                            <strong>{privateState.category}</strong>) to blend in.
-                          </p>
-                          <span className="tap-hint">Tap card to hide</span>
-                        </>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="tap-role-content">
-                      <EyeSlash size={36} className="muted-icon" />
-                      <span className="tap-card-title">Tap to Reveal Card</span>
-                      <span className="tap-hint">Keep hidden from other players</span>
-                    </div>
-                  )}
+                  <span className="mode-card-top">
+                    <WifiHigh size={20} weight="bold" />
+                    <span className="mode-radio" />
+                  </span>
+                  <span className="mode-card-name">Host Game</span>
+                  <span className="mode-card-when">Create room on Wi-Fi</span>
                 </button>
-
-                {playerMap.get(credentials.player_id)?.ready_in_reveal ? (
-                  <div className="status-banner">
-                    Ready ({publicState.players.filter((p) => p.ready_in_reveal).length}/
-                    {publicState.speaking_order.length})
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    className="btn btn-primary full-width"
-                    onClick={() => {
-                      setCardRevealed(false);
-                      sendWsAction({ type: "acknowledge_role" });
-                    }}
-                  >
-                    <span>Got It, Ready</span>
-                    <ArrowRight size={18} />
-                  </button>
-                )}
-
-                {isHost && (
-                  <button
-                    type="button"
-                    className="btn btn-ghost full-width"
-                    onClick={() => sendWsAction({ type: "begin_clue_round" })}
-                  >
-                    Start Clue Round Now
-                  </button>
-                )}
-              </section>
+              </nav>
             )}
 
-            {/* PHASE 3: CLUE ROUND */}
-            {currentPhase === "CLUE_ROUND" && publicState && (
-              <section className="card-screen">
-                <div className="screen-top-row">
-                  <div>
-                    <span className="mono-tag">
-                      CLUE ROUND {publicState.clue_round_number} ·{" "}
-                      {publicState.active_category}
+            <form className="entry-form" onSubmit={handleJoinOrCreate}>
+              <div className="field-block">
+                <label htmlFor="nickname-input" className="field-label">
+                  Your Name
+                </label>
+                <input
+                  id="nickname-input"
+                  type="text"
+                  className="text-input"
+                  maxLength={18}
+                  required
+                  autoFocus
+                  autoComplete="off"
+                  value={nicknameInput}
+                  onChange={(e) => setNicknameInput(e.target.value)}
+                  placeholder="Enter your nickname"
+                />
+              </div>
+
+              {entryMode === "join" && (
+                <div className="field-block">
+                  <label htmlFor="room-code-input" className="field-label">
+                    Room Code
+                  </label>
+                  <input
+                    id="room-code-input"
+                    type="text"
+                    className="text-input code-input"
+                    maxLength={8}
+                    required
+                    autoComplete="off"
+                    value={roomCodeInput}
+                    onChange={(e) =>
+                      setRoomCodeInput(e.target.value.toUpperCase())
+                    }
+                    placeholder={activeRoomCode}
+                  />
+                </div>
+              )}
+
+              <button
+                type="submit"
+                className="pill-btn pill-btn-primary"
+                disabled={isSubmittingJoin}
+              >
+                {entryMode === "host" ? "Create & Enter Lobby" : "Join Room"}
+              </button>
+            </form>
+          </section>
+        ) : (
+          <>
+            {/* SCREEN 3 & 11: LOBBY, PLAYER LIST, QR SHARING & HOST CONTROLS */}
+            {currentPhase === "LOBBY" && publicState && (
+              <section className="phase-screen has-sticky-footer">
+                <div className="lobby-invite">
+                  <GhostMascot mood="calm" size={64} />
+                  <h1 className="lobby-invite-title">Invite Players</h1>
+
+                  {/* 6-Digit Room Code Tiles */}
+                  <div
+                    className="lobby-code-digits"
+                    aria-label={`Room code ${publicState.room_code}`}
+                  >
+                    {publicState.room_code.split("").map((char, idx) => (
+                      <span key={idx} className="lobby-code-digit">
+                        {char}
+                      </span>
+                    ))}
+                  </div>
+
+                  {/* Scannable Backend-Generated QR Code */}
+                  {networkInfo && (
+                    <div className="qr-share-block">
+                      <div className="qr-frame">
+                        <img
+                          src={`${networkInfo.qr_png_url}&v=${encodeURIComponent(
+                            networkInfo.join_url
+                          )}`}
+                          alt={`QR code for ${networkInfo.join_url}`}
+                          className="qr-image"
+                          width={184}
+                          height={184}
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        className="lobby-link-pill"
+                        onClick={handleCopyJoinUrl}
+                      >
+                        <span className="lobby-link-text">
+                          {copiedUrl ? "Link Copied!" : networkInfo.join_url}
+                        </span>
+                        {copiedUrl ? (
+                          <Check size={16} weight="bold" />
+                        ) : (
+                          <Copy size={16} weight="bold" />
+                        )}
+                      </button>
+
+                      {(!networkInfo.network_reachable || editingIp) && (
+                        <div className="network-override-box">
+                          {networkInfo.network_warning && (
+                            <p className="network-warning-text">
+                              {networkInfo.network_warning}
+                            </p>
+                          )}
+                          <div className="inline-field-row">
+                            <input
+                              type="text"
+                              className="text-input text-input-sm"
+                              value={customHostIp}
+                              onChange={(e) => setCustomHostIp(e.target.value)}
+                              placeholder="UNO Q Wi-Fi IP (e.g. 192.168.1.50)"
+                              aria-label="UNO Q Wi-Fi IP address"
+                            />
+                            <button
+                              type="button"
+                              className="pill-btn pill-btn-secondary pill-btn-inline"
+                              onClick={() => {
+                                void fetchNetworkInfo(
+                                  publicState.room_code,
+                                  customHostIp
+                                );
+                                setEditingIp(false);
+                              }}
+                            >
+                              Set IP
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="lobby-share-links">
+                        <button
+                          type="button"
+                          className="underline-btn"
+                          onClick={() => setEditingIp((v) => !v)}
+                        >
+                          {editingIp ? "Hide IP setting" : "Change Wi-Fi IP"}
+                        </button>
+                        {isHost && (
+                          <button
+                            type="button"
+                            className="underline-btn"
+                            onClick={() => void handleGenerateNewRoom()}
+                          >
+                            New Room Code
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Host Category Selector inside Lobby Card */}
+                  {isHost && (
+                    <div className="lobby-config">
+                      <div className="lobby-config-divider" />
+                      <div className="config-item full-width">
+                        <label
+                          htmlFor="lobby-category-select"
+                          className="config-label"
+                        >
+                          Category
+                        </label>
+                        <select
+                          id="lobby-category-select"
+                          className="select-input"
+                          value={publicState.selected_category || "random"}
+                          onChange={(e) =>
+                            sendWsAction({
+                              type: "update_settings",
+                              selected_category: e.target.value,
+                            })
+                          }
+                        >
+                          <option value="random">Random Horror Theme</option>
+                          {publicState.available_categories.map((cat) => (
+                            <option key={cat} value={cat}>
+                              {cat}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Connected Players List */}
+                <div className="online-panel">
+                  <div className="online-panel-head">
+                    <span className="online-panel-label">Players</span>
+                    <span
+                      className={
+                        publicState.host_ready
+                          ? "online-panel-count is-ready"
+                          : "online-panel-count"
+                      }
+                    >
+                      {connectedCount}/{publicState.max_players}
                     </span>
-                    <h1 className="screen-title">
-                      {publicState.current_speaker_id === credentials.player_id
-                        ? "Your Turn"
-                        : `${
-                            playerMap.get(publicState.current_speaker_id || "")
-                              ?.nickname || "Player"
-                          }'s Turn`}
-                    </h1>
+                  </div>
+
+                  <div className="online-panel-card">
+                    <ul className="player-list">
+                      {publicState.players.map((p, idx) => (
+                        <li
+                          key={p.player_id}
+                          className={
+                            p.connected
+                              ? "player-row"
+                              : "player-row is-disconnected"
+                          }
+                        >
+                          <span
+                            className="player-avatar"
+                            style={{ backgroundColor: avatarColor(idx) }}
+                          >
+                            {p.nickname.charAt(0).toUpperCase()}
+                          </span>
+                          <div className="player-main">
+                            <span className="player-name">{p.nickname}</span>
+                            {p.player_id === credentials.player_id && (
+                              <span className="badge-pill badge-me">You</span>
+                            )}
+                            {p.is_host && (
+                              <span className="badge-pill badge-host">Host</span>
+                            )}
+                          </div>
+                          <div className="player-right">
+                            {p.score > 0 && (
+                              <span className="score-label">{p.score} pts</span>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                 </div>
 
+                {/* Sticky Stage Footer */}
+                <div className="online-stage-footer">
+                  {isHost ? (
+                    <button
+                      type="button"
+                      className="stage-btn is-primary"
+                      disabled={!publicState.host_ready}
+                      onClick={() => sendWsAction({ type: "start_round" })}
+                    >
+                      {publicState.host_ready
+                        ? "Start Game"
+                        : `Need ${Math.max(
+                            0,
+                            publicState.min_players - connectedCount
+                          )} more to start (min ${publicState.min_players})`}
+                    </button>
+                  ) : (
+                    <div className="stage-status">
+                      <span className="stage-status-dot" />
+                      <span>
+                        {publicState.host_ready
+                          ? "Waiting for host to start..."
+                          : `Waiting for players (${connectedCount}/${publicState.min_players})...`}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {/* SCREEN 4: SECRET ROLE & WORD REVEAL */}
+            {currentPhase === "ROLE_REVEAL" && publicState && privateState && (
+              <section className="phase-screen fullscreen-card-stage has-sticky-footer">
+                <div className="stage-top-caption">
+                  <h1 className="stage-heading">Your Secret Card</h1>
+                  <p className="stage-subtext">
+                    Tap the card to view your role. Make sure no one else sees it.
+                  </p>
+                </div>
+
+                <div id="card-area">
+                  <button
+                    type="button"
+                    className={cardRevealed ? "role-card revealed" : "role-card"}
+                    onClick={() => setCardRevealed((v) => !v)}
+                    aria-expanded={cardRevealed}
+                  >
+                    <div className="role-card-under">
+                      <div className="role-card-under-inner">
+                        <span
+                          className={
+                            privateState.role === "IMPOSTER"
+                              ? "role-tag role-tag-imposter"
+                              : "role-tag role-tag-survivor"
+                          }
+                        >
+                          {privateState.role === "IMPOSTER"
+                            ? "IMPOSTER"
+                            : "SURVIVOR"}
+                        </span>
+
+                        <span className="role-category-caption">
+                          {privateState.category || publicState.active_category}
+                        </span>
+
+                        {privateState.role === "SURVIVOR" ? (
+                          <div className="revealed-secret-word">
+                            {privateState.secret_word}
+                          </div>
+                        ) : (
+                          <p className="revealed-imposter-note">
+                            You do not know the secret word. Blend in and figure
+                            it out.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="role-card-cover">
+                      <GhostMascot mood="curious" size={64} />
+                      <span className="role-card-cover-name">
+                        {credentials.nickname}
+                      </span>
+                      <span className="role-card-cover-hint">
+                        {cardRevealed ? "Tap to Hide" : "Tap to Reveal"}
+                      </span>
+                    </div>
+                  </button>
+                </div>
+
+                <div className="online-stage-footer">
+                  {playerMap.get(credentials.player_id)?.ready_in_reveal ? (
+                    <div className="stage-status is-ready">
+                      <span className="stage-status-dot" />
+                      <span>
+                        Ready (
+                        {
+                          publicState.players.filter((p) => p.ready_in_reveal)
+                            .length
+                        }
+                        /{publicState.speaking_order.length})
+                      </span>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="stage-btn is-primary"
+                      onClick={() => {
+                        setCardRevealed(false);
+                        sendWsAction({ type: "acknowledge_role" });
+                      }}
+                    >
+                      Got It, Ready
+                    </button>
+                  )}
+
+                  {isHost && (
+                    <button
+                      type="button"
+                      className="underline-btn"
+                      onClick={() => sendWsAction({ type: "begin_clue_round" })}
+                    >
+                      Start Clues Now
+                    </button>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {/* SCREEN 5: CLUE SUBMISSION */}
+            {currentPhase === "CLUE_ROUND" && publicState && (
+              <section className="phase-screen has-sticky-footer">
+                {/* Secret Word / Role Reminder Bar */}
+                {privateState && (
+                  <div
+                    className={
+                      secretPeekOpen && privateState.role === "IMPOSTER"
+                        ? "secret-block is-imposter"
+                        : "secret-block"
+                    }
+                  >
+                    <div className="secret-text">
+                      <span className="secret-label">
+                        {privateState.category || publicState.active_category} ·
+                        Clue Round {publicState.clue_round_number}
+                      </span>
+                      <span className="secret-word">
+                        {secretPeekOpen
+                          ? privateState.role === "IMPOSTER"
+                            ? "You are the Imposter"
+                            : privateState.secret_word
+                          : "Tap eye to peek your card"}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="circle-icon-btn"
+                      onClick={() => setSecretPeekOpen((v) => !v)}
+                      aria-label={
+                        secretPeekOpen ? "Hide secret card" : "Peek secret card"
+                      }
+                    >
+                      {secretPeekOpen ? (
+                        <EyeSlash size={18} weight="bold" />
+                      ) : (
+                        <Eye size={18} weight="bold" />
+                      )}
+                    </button>
+                  </div>
+                )}
+
+                {/* Active Turn Input or Waiting Prompt */}
                 {publicState.current_speaker_id === credentials.player_id ? (
                   <form
-                    className="stack-form"
+                    className="turn-input-block"
                     onSubmit={(e) => {
                       e.preventDefault();
                       if (!clueDraft.trim()) return;
@@ -681,213 +916,307 @@ export const App: React.FC = () => {
                       setClueDraft("");
                     }}
                   >
-                    <div className="form-field">
-                      <input
-                        id="clue-input"
-                        type="text"
-                        className="input-control input-large"
-                        maxLength={40}
-                        autoFocus
-                        required
-                        value={clueDraft}
-                        onChange={(e) => setClueDraft(e.target.value)}
-                        placeholder="Enter one-word or short clue..."
-                      />
-                    </div>
-                    <button type="submit" className="btn btn-primary full-width">
-                      <span>Submit Clue</span>
-                      <ArrowRight size={18} />
+                    <label htmlFor="clue-input" className="stage-heading">
+                      Your Turn — Give One Clue
+                    </label>
+                    <input
+                      id="clue-input"
+                      type="text"
+                      className="text-input"
+                      maxLength={40}
+                      autoFocus
+                      required
+                      autoComplete="off"
+                      value={clueDraft}
+                      onChange={(e) => setClueDraft(e.target.value)}
+                      placeholder="Enter a one-word or short clue..."
+                    />
+                    <button type="submit" className="stage-btn is-primary">
+                      Submit Clue
                     </button>
                   </form>
                 ) : (
-                  <div className="status-banner">
-                    Waiting for{" "}
-                    <strong>
-                      {playerMap.get(publicState.current_speaker_id || "")?.nickname}
-                    </strong>{" "}
-                    to give a clue...
+                  <div className="turn-waiting-card">
+                    <h1 className="stage-heading">
+                      {playerMap.get(publicState.current_speaker_id || "")
+                        ?.nickname || "Player"}
+                      ’s Turn
+                    </h1>
+                    <p className="stage-subtext">
+                      Waiting for their clue...
+                    </p>
                   </div>
                 )}
 
-                <div className="speaker-pills">
-                  {publicState.speaking_order.map((pid, idx) => {
-                    const p = playerMap.get(pid);
-                    const isCurrent = pid === publicState.current_speaker_id;
-                    return (
-                      <span
-                        key={pid}
-                        className={
-                          p?.has_submitted_clue
-                            ? "speaker-chip speaker-done"
-                            : isCurrent
-                            ? "speaker-chip speaker-active"
-                            : "speaker-chip"
-                        }
-                      >
-                        {idx + 1}. {p?.nickname || pid}
-                      </span>
-                    );
-                  })}
-                </div>
+                {/* Speaking Order & Clues List */}
+                <div className="online-panel">
+                  <div className="online-panel-head">
+                    <span className="online-panel-label">Clues</span>
+                    <span className="online-panel-count">
+                      Round {publicState.clue_round_number}
+                    </span>
+                  </div>
 
-                {publicState.clues.length > 0 && (
-                  <div className="section-block">
-                    <span className="field-label">Submitted Clues</span>
-                    <ul className="clue-list">
-                      {publicState.clues.map((c) => (
-                        <li key={c.turn_index} className="clue-row">
-                          <span className="clue-author">
-                            {c.nickname}
-                            {publicState.clue_round_number > 1 && (
-                              <span className="clue-pass-tag">R{c.round_pass}</span>
-                            )}
-                          </span>
-                          <span className="clue-text">{c.clue}</span>
-                        </li>
-                      ))}
+                  <div className="online-panel-card">
+                    <ul className="player-list">
+                      {publicState.speaking_order.map((pid, orderIdx) => {
+                        const p = playerMap.get(pid);
+                        const pIdx = playerIndexMap.get(pid) ?? orderIdx;
+                        const isCurrent = pid === publicState.current_speaker_id;
+                        const playerClues = publicState.clues.filter(
+                          (c) => c.player_id === pid
+                        );
+                        return (
+                          <li
+                            key={pid}
+                            className={[
+                              "player-row",
+                              isCurrent ? "is-active" : "",
+                              playerClues.length > 0 ? "has-clue" : "",
+                            ]
+                              .filter(Boolean)
+                              .join(" ")}
+                          >
+                            <span
+                              className="player-avatar"
+                              style={{ backgroundColor: avatarColor(pIdx) }}
+                            >
+                              {(p?.nickname || "?").charAt(0).toUpperCase()}
+                            </span>
+                            <div className="player-main">
+                              <span className="player-name">
+                                {p?.nickname || pid}
+                              </span>
+                              {isCurrent && (
+                                <span className="badge-pill badge-turn">
+                                  Speaking
+                                </span>
+                              )}
+                              {playerClues.length > 0 && (
+                                <div className="player-clue">
+                                  {playerClues.map((c) => c.clue).join(" · ")}
+                                </div>
+                              )}
+                            </div>
+                          </li>
+                        );
+                      })}
                     </ul>
                   </div>
-                )}
+                </div>
 
                 {isHost && (
-                  <button
-                    type="button"
-                    className="btn btn-ghost full-width"
-                    onClick={() => sendWsAction({ type: "skip_speaker" })}
-                  >
-                    Skip Inactive Speaker
-                  </button>
+                  <div className="online-stage-footer">
+                    <button
+                      type="button"
+                      className="stage-btn is-secondary"
+                      onClick={() => sendWsAction({ type: "skip_speaker" })}
+                    >
+                      Skip Inactive Player
+                    </button>
+                  </div>
                 )}
               </section>
             )}
 
-            {/* PHASE 4: POST-CLUE DECISION (Start Voting vs Another Clue Round) */}
+            {/* SCREEN 6: CLUE DISCUSSION & CONTINUATION */}
             {currentPhase === "DISCUSSION" && publicState && (
-              <section className="card-screen">
-                <div className="screen-top-row">
-                  <div>
-                    <span className="mono-tag">
-                      CLUE ROUND {publicState.clue_round_number} COMPLETE ·{" "}
-                      {publicState.active_category}
+              <section className="phase-screen has-sticky-footer">
+                <div className="stage-top-caption">
+                  <h1 className="stage-heading">Discuss the Clues</h1>
+                  <p className="stage-subtext">
+                    Vote now to expose the Imposter, or play another clue round.
+                  </p>
+                </div>
+
+                <div className="online-panel">
+                  <div className="online-panel-head">
+                    <span className="online-panel-label">
+                      All Clues ({publicState.active_category})
                     </span>
-                    <h1 className="screen-title">Ready to Vote?</h1>
+                    <span className="online-panel-count">
+                      {publicState.clue_round_number}{" "}
+                      {publicState.clue_round_number === 1 ? "Round" : "Rounds"}
+                    </span>
+                  </div>
+
+                  <div className="online-panel-card">
+                    <ul className="player-list">
+                      {publicState.speaking_order.map((pid, orderIdx) => {
+                        const p = playerMap.get(pid);
+                        const pIdx = playerIndexMap.get(pid) ?? orderIdx;
+                        const playerClues = publicState.clues.filter(
+                          (c) => c.player_id === pid
+                        );
+                        return (
+                          <li key={pid} className="player-row has-clue">
+                            <span
+                              className="player-avatar"
+                              style={{ backgroundColor: avatarColor(pIdx) }}
+                            >
+                              {(p?.nickname || "?").charAt(0).toUpperCase()}
+                            </span>
+                            <div className="player-main">
+                              <span className="player-name">
+                                {p?.nickname || pid}
+                              </span>
+                              <div className="player-clue">
+                                {playerClues.map((c) => c.clue).join(" · ")}
+                              </div>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
                   </div>
                 </div>
 
-                <p className="screen-subtitle">
-                  Discuss the clues below. Vote now to accuse the Imposter, or play another
-                  clue round for more information.
-                </p>
-
-                <ul className="clue-list">
-                  {publicState.clues.map((c) => (
-                    <li key={c.turn_index} className="clue-row">
-                      <span className="clue-author">
-                        {c.nickname}
-                        {publicState.clue_round_number > 1 && (
-                          <span className="clue-pass-tag">R{c.round_pass}</span>
-                        )}
+                <div className="online-stage-footer">
+                  {isHost ? (
+                    <>
+                      <button
+                        type="button"
+                        className="stage-btn is-primary"
+                        onClick={() => sendWsAction({ type: "begin_voting" })}
+                      >
+                        Start Voting
+                      </button>
+                      <button
+                        type="button"
+                        className="stage-btn is-secondary"
+                        onClick={() =>
+                          sendWsAction({ type: "another_clue_round" })
+                        }
+                      >
+                        <ArrowsClockwise
+                          size={18}
+                          weight="bold"
+                          style={{ verticalAlign: "middle", marginRight: 6 }}
+                        />
+                        Another Clue Round
+                      </button>
+                    </>
+                  ) : (
+                    <div className="stage-status">
+                      <span className="stage-status-dot" />
+                      <span>
+                        Host is choosing: Start Voting or Another Clue Round...
                       </span>
-                      <span className="clue-text">{c.clue}</span>
-                    </li>
-                  ))}
-                </ul>
-
-                {isHost ? (
-                  <div className="action-stack">
-                    <button
-                      type="button"
-                      className="btn btn-primary full-width"
-                      onClick={() => sendWsAction({ type: "begin_voting" })}
-                    >
-                      <span>Start Voting</span>
-                      <ArrowRight size={18} />
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-secondary full-width"
-                      onClick={() => sendWsAction({ type: "another_clue_round" })}
-                    >
-                      <ArrowsClockwise size={18} />
-                      <span>Another Clue Round</span>
-                    </button>
-                  </div>
-                ) : (
-                  <div className="status-banner">
-                    Host is choosing: <strong>Start Voting</strong> or{" "}
-                    <strong>Another Clue Round</strong>...
-                  </div>
-                )}
+                    </div>
+                  )}
+                </div>
               </section>
             )}
 
-            {/* PHASE 5 & RUNOFF: SECRET VOTING */}
+            {/* SCREEN 7: SECRET VOTING & RUNOFF */}
             {(currentPhase === "VOTING" || currentPhase === "RUNOFF") &&
               publicState && (
-                <section className="card-screen">
-                  <div className="screen-top-row">
-                    <div>
-                      <span className="mono-tag">
-                        {currentPhase === "RUNOFF" ? "TIE-BREAKER RUNOFF" : "SECRET VOTE"}
-                      </span>
-                      <h1 className="screen-title">Who is the Imposter?</h1>
-                    </div>
-                    <span className="mono-badge">
-                      {publicState.votes_cast_count}/{publicState.eligible_voters_count} Voted
-                    </span>
+                <section className="phase-screen has-sticky-footer">
+                  <div className="stage-top-caption">
+                    <h1 className="stage-heading">
+                      {currentPhase === "RUNOFF"
+                        ? "Tie-Breaker Vote"
+                        : "Who is the Imposter?"}
+                    </h1>
+                    <p className="stage-subtext">
+                      Tap a player below to cast your secret vote.
+                    </p>
                   </div>
 
-                  {privateState?.has_voted_for ? (
-                    <div className="status-banner">
-                      Vote locked for{" "}
-                      <strong>
-                        {playerMap.get(privateState.has_voted_for)?.nickname || "Player"}
-                      </strong>
-                      . Waiting for others...
+                  <div className="online-panel">
+                    <div className="online-panel-head">
+                      <span className="online-panel-label">Suspects</span>
+                      <span className="online-panel-count">
+                        {publicState.votes_cast_count}/
+                        {publicState.eligible_voters_count} Voted
+                      </span>
                     </div>
-                  ) : (
-                    <div className="action-stack">
-                      <div className="vote-targets-grid">
-                        {publicState.speaking_order
-                          .filter((pid) => pid !== credentials.player_id)
-                          .filter(
-                            (pid) =>
-                              currentPhase !== "RUNOFF" ||
-                              publicState.runoff_candidates.includes(pid)
-                          )
-                          .map((pid) => {
-                            const p = playerMap.get(pid);
-                            const playerClues = publicState.clues
-                              .filter((c) => c.player_id === pid)
-                              .map((c) => c.clue)
-                              .join(" · ");
-                            const isSelected = selectedVoteTarget === pid;
-                            return (
-                              <button
-                                key={pid}
-                                type="button"
-                                className={
-                                  isSelected
-                                    ? "vote-target-btn vote-target-selected"
-                                    : "vote-target-btn"
-                                }
-                                onClick={() => setSelectedVoteTarget(pid)}
-                              >
-                                <div className="row-between">
-                                  <span className="vote-name">{p?.nickname || pid}</span>
-                                  {isSelected && <Check size={18} className="danger-text" />}
-                                </div>
-                                {playerClues && (
-                                  <div className="vote-target-clue">{playerClues}</div>
-                                )}
-                              </button>
-                            );
-                          })}
-                      </div>
 
+                    {privateState?.has_voted_for ? (
+                      <div className="turn-waiting-card">
+                        <strong>
+                          You voted for{" "}
+                          {playerMap.get(privateState.has_voted_for)?.nickname ||
+                            "Suspect"}
+                        </strong>
+                        <p className="stage-subtext">
+                          Waiting for remaining players to vote...
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="online-panel-card">
+                        <ul className="player-list">
+                          {publicState.speaking_order
+                            .filter((pid) => pid !== credentials.player_id)
+                            .filter(
+                              (pid) =>
+                                currentPhase !== "RUNOFF" ||
+                                publicState.runoff_candidates.includes(pid)
+                            )
+                            .map((pid) => {
+                              const p = playerMap.get(pid);
+                              const pIdx = playerIndexMap.get(pid) ?? 0;
+                              const playerClues = publicState.clues
+                                .filter((c) => c.player_id === pid)
+                                .map((c) => c.clue)
+                                .join(" · ");
+                              const isSelected = selectedVoteTarget === pid;
+                              return (
+                                <li key={pid}>
+                                  <button
+                                    type="button"
+                                    className={
+                                      isSelected
+                                        ? "player-row vote-row is-active"
+                                        : "player-row vote-row"
+                                    }
+                                    onClick={() => setSelectedVoteTarget(pid)}
+                                  >
+                                    <span
+                                      className="player-avatar"
+                                      style={{
+                                        backgroundColor: avatarColor(pIdx),
+                                      }}
+                                    >
+                                      {(p?.nickname || "?")
+                                        .charAt(0)
+                                        .toUpperCase()}
+                                    </span>
+                                    <div className="player-main">
+                                      <span className="player-name">
+                                        {p?.nickname || pid}
+                                      </span>
+                                      {playerClues && (
+                                        <div className="player-clue">
+                                          {playerClues}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <span
+                                      className={
+                                        isSelected
+                                          ? "vote-check is-checked"
+                                          : "vote-check"
+                                      }
+                                    >
+                                      {isSelected && (
+                                        <Check size={14} weight="bold" />
+                                      )}
+                                    </span>
+                                  </button>
+                                </li>
+                              );
+                            })}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="online-stage-footer">
+                    {!privateState?.has_voted_for && (
                       <button
                         type="button"
-                        className="btn btn-danger full-width"
+                        className="stage-btn is-primary"
                         disabled={!selectedVoteTarget}
                         onClick={() => {
                           if (!selectedVoteTarget) return;
@@ -897,37 +1226,41 @@ export const App: React.FC = () => {
                           });
                         }}
                       >
-                        <span>Submit Vote</span>
-                        <ArrowRight size={18} />
+                        Submit Vote
                       </button>
-                    </div>
-                  )}
+                    )}
 
-                  {isHost && (
-                    <button
-                      type="button"
-                      className="btn btn-ghost full-width"
-                      onClick={() => sendWsAction({ type: "finalize_voting" })}
-                    >
-                      Tally Votes Now
-                    </button>
-                  )}
+                    {isHost && (
+                      <button
+                        type="button"
+                        className="underline-btn"
+                        onClick={() => sendWsAction({ type: "finalize_voting" })}
+                      >
+                        Close Vote Early
+                      </button>
+                    )}
+                  </div>
                 </section>
               )}
 
-            {/* PHASE 6: IMPOSTER FINAL GUESS */}
+            {/* SCREEN 8: IMPOSTER FINAL WORD GUESS */}
             {currentPhase === "FINAL_GUESS" && publicState && (
-              <section className="card-screen">
-                <div className="center-header">
-                  <span className="mono-pill danger-pill">IMPOSTER CAUGHT</span>
-                  <h1 className="screen-title">
-                    {playerMap.get(publicState.accused_player_id || "")?.nickname} Was Caught!
+              <section className="phase-screen has-sticky-footer">
+                <div className="ended-banner imposters-win">
+                  <GhostMascot mood="alert" size={76} />
+                  <h1 className="ended-title">
+                    {playerMap.get(publicState.accused_player_id || "")
+                      ?.nickname || "The Imposter"}{" "}
+                    Was Caught!
                   </h1>
+                  <p className="ended-subtitle">
+                    One final chance to guess the secret word and steal the win.
+                  </p>
                 </div>
 
                 {privateState?.can_submit_final_guess ? (
                   <form
-                    className="stack-form"
+                    className="turn-input-block"
                     onSubmit={(e) => {
                       e.preventDefault();
                       if (!finalGuessDraft.trim()) return;
@@ -937,164 +1270,216 @@ export const App: React.FC = () => {
                       });
                     }}
                   >
-                    <p className="screen-subtitle">
-                      Guess the secret word in{" "}
-                      <strong>{publicState.active_category}</strong> to steal the win.
-                    </p>
-
-                    <div className="form-field">
-                      <input
-                        id="final-guess-input"
-                        type="text"
-                        className="input-control input-large"
-                        maxLength={48}
-                        autoFocus
-                        required
-                        value={finalGuessDraft}
-                        onChange={(e) => setFinalGuessDraft(e.target.value)}
-                        placeholder="Guess the secret word..."
-                      />
-                    </div>
-
-                    <button type="submit" className="btn btn-danger full-width">
-                      <span>Submit Final Guess</span>
-                      <ArrowRight size={18} />
+                    <label htmlFor="final-guess-input" className="field-label">
+                      Secret Word in {publicState.active_category}
+                    </label>
+                    <input
+                      id="final-guess-input"
+                      type="text"
+                      className="text-input"
+                      maxLength={48}
+                      autoFocus
+                      required
+                      autoComplete="off"
+                      value={finalGuessDraft}
+                      onChange={(e) => setFinalGuessDraft(e.target.value)}
+                      placeholder="Type your final guess..."
+                    />
+                    <button type="submit" className="stage-btn is-primary">
+                      Submit Final Guess
                     </button>
                   </form>
                 ) : (
-                  <div className="status-banner">
-                    Waiting for{" "}
+                  <div className="turn-waiting-card">
                     <strong>
-                      {playerMap.get(publicState.accused_player_id || "")?.nickname}
-                    </strong>{" "}
-                    to guess the secret word...
+                      Waiting for{" "}
+                      {
+                        playerMap.get(publicState.accused_player_id || "")
+                          ?.nickname
+                      }
+                      ’s final guess...
+                    </strong>
                   </div>
                 )}
               </section>
             )}
 
-            {/* PHASE 7: RESULTS & REPLAY */}
+            {/* SCREEN 9 & 10: RESULTS, WINNER REVEAL, LEADERBOARD & REPLAY */}
             {currentPhase === "RESULTS" && publicState?.outcome && (
-              <section className="card-screen">
-                <div className="center-header">
-                  <span
-                    className={
+              <section className="phase-screen has-sticky-footer">
+                <div
+                  className={
+                    publicState.outcome.winner === "SURVIVORS"
+                      ? "ended-banner civilians-win"
+                      : "ended-banner imposters-win"
+                  }
+                >
+                  <GhostMascot
+                    mood={
                       publicState.outcome.winner === "SURVIVORS"
-                        ? "winner-banner winner-survivors"
-                        : "winner-banner winner-imposter"
+                        ? "defeated"
+                        : "victory"
                     }
-                  >
+                    size={76}
+                  />
+                  <h1 className="ended-title">
                     {publicState.outcome.winner === "SURVIVORS"
-                      ? "SURVIVORS WIN"
-                      : "IMPOSTER WINS"}
-                  </span>
-                  <p className="outcome-summary">{publicState.outcome.summary_text}</p>
+                      ? "Survivors Win!"
+                      : "Imposter Wins!"}
+                  </h1>
+                  <p className="ended-subtitle">
+                    {publicState.outcome.summary_text}
+                  </p>
                 </div>
 
-                <div className="reveal-dossier-grid">
-                  <div className="dossier-cell">
-                    <span className="helper-label">SECRET WORD</span>
-                    <strong className="dossier-val cyan-text">
+                <div className="reveal-pair">
+                  <div className="reveal-box">
+                    <span className="reveal-box-label">Secret Word</span>
+                    <strong className="reveal-box-value">
                       {publicState.outcome.secret_word}
                     </strong>
-                    <span className="mono-tag">{publicState.outcome.category}</span>
+                    <span className="field-hint">
+                      {publicState.outcome.category}
+                    </span>
                   </div>
 
-                  <div className="dossier-cell">
-                    <span className="helper-label">IMPOSTER</span>
-                    <strong className="dossier-val danger-text">
+                  <div className="reveal-box">
+                    <span className="reveal-box-label">The Imposter</span>
+                    <strong className="reveal-box-value is-imposter-name">
                       {publicState.outcome.imposter_nickname}
                     </strong>
                     {publicState.outcome.imposter_final_guess && (
-                      <span className="mono-tag">
-                        Guessed: “{publicState.outcome.imposter_final_guess}”
+                      <span className="field-hint">
+                        Guessed “{publicState.outcome.imposter_final_guess}”
                       </span>
                     )}
                   </div>
                 </div>
 
-                <div className="section-block">
-                  <span className="field-label">Scores</span>
-                  <ul className="player-list">
-                    {[...publicState.players]
-                      .sort((a, b) => b.score - a.score)
-                      .map((p, idx) => {
-                        const delta =
-                          publicState.outcome?.score_deltas[p.player_id] || 0;
-                        return (
-                          <li key={p.player_id} className="player-chip">
-                            <span>
-                              {idx + 1}. {p.nickname}
-                              {p.player_id === publicState.outcome?.imposter_id && (
-                                <span className="imposter-inline-tag">IMPOSTER</span>
-                              )}
-                            </span>
-                            <div className="row-center gap-2">
-                              {delta > 0 && <span className="score-delta">+{delta}</span>}
-                              <strong className="mono-score">{p.score} pts</strong>
-                            </div>
-                          </li>
-                        );
-                      })}
-                  </ul>
+                {/* Leaderboard & Clues Summary */}
+                <div className="online-panel">
+                  <div className="online-panel-head">
+                    <span className="online-panel-label">Leaderboard</span>
+                    <span className="online-panel-count">
+                      Round {publicState.round_number}
+                    </span>
+                  </div>
+
+                  <div className="online-panel-card">
+                    <ul className="player-list">
+                      {[...publicState.players]
+                        .sort((a, b) => b.score - a.score)
+                        .map((p) => {
+                          const pIdx = playerIndexMap.get(p.player_id) ?? 0;
+                          const isImp =
+                            p.player_id === publicState.outcome?.imposter_id;
+                          const delta =
+                            publicState.outcome?.score_deltas[p.player_id] || 0;
+                          const playerClues = publicState.clues
+                            .filter((c) => c.player_id === p.player_id)
+                            .map((c) => c.clue)
+                            .join(" · ");
+                          return (
+                            <li key={p.player_id} className="player-row">
+                              <span
+                                className="player-avatar"
+                                style={{ backgroundColor: avatarColor(pIdx) }}
+                              >
+                                {p.nickname.charAt(0).toUpperCase()}
+                              </span>
+                              <div className="player-main">
+                                <span className="player-name">
+                                  {p.nickname}
+                                </span>
+                                {isImp && (
+                                  <span className="badge-pill badge-imposter">
+                                    Imposter
+                                  </span>
+                                )}
+                                {playerClues && (
+                                  <span className="field-hint">
+                                    Clues: {playerClues}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="player-right">
+                                {delta > 0 && (
+                                  <span className="delta-badge">+{delta}</span>
+                                )}
+                                <strong className="score-label">
+                                  {p.score} pts
+                                </strong>
+                              </div>
+                            </li>
+                          );
+                        })}
+                    </ul>
+                  </div>
                 </div>
 
-                {isHost ? (
-                  <div className="action-stack">
-                    <button
-                      type="button"
-                      className="btn btn-primary full-width"
-                      onClick={() => sendWsAction({ type: "play_again" })}
-                    >
-                      <span>Play Again</span>
-                      <ArrowRight size={18} />
-                    </button>
-                    <div className="row-split">
+                <div className="online-stage-footer">
+                  {isHost ? (
+                    <>
                       <button
                         type="button"
-                        className="btn btn-secondary full-width"
-                        onClick={() => sendWsAction({ type: "return_to_lobby" })}
+                        className="stage-btn is-primary"
+                        onClick={() => sendWsAction({ type: "play_again" })}
                       >
-                        Lobby
+                        Play Again
                       </button>
-                      <button
-                        type="button"
-                        className="btn btn-ghost full-width"
-                        onClick={() => sendWsAction({ type: "reset_scores" })}
-                      >
-                        Reset Scores
-                      </button>
+                      <div className="footer-split-row">
+                        <button
+                          type="button"
+                          className="stage-btn is-secondary"
+                          onClick={() =>
+                            sendWsAction({ type: "return_to_lobby" })
+                          }
+                        >
+                          Back to Lobby
+                        </button>
+                        <button
+                          type="button"
+                          className="stage-btn is-secondary"
+                          onClick={() => sendWsAction({ type: "reset_scores" })}
+                        >
+                          Reset Scores
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="stage-status">
+                      <span className="stage-status-dot" />
+                      <span>Waiting for host to start next round...</span>
                     </div>
-                  </div>
-                ) : (
-                  <div className="status-banner">
-                    Waiting for host to start the next round...
-                  </div>
-                )}
+                  )}
+                </div>
               </section>
             )}
           </>
         )}
       </main>
 
-      {/* UNO Q 8x13 LED Matrix & Host Settings Modal Sheet */}
-      {drawerOpen && (
+      {/* UNO Q 8x13 LED Matrix & Host Settings Modal */}
+      {settingsOpen && (
         <div
           className="modal-backdrop"
           role="dialog"
           aria-modal="true"
-          aria-label="UNO Q Hardware & Host Settings"
+          aria-labelledby="settings-modal-title"
+          onClick={() => setSettingsOpen(false)}
         >
-          <div className="modal-sheet">
-            <div className="modal-header">
-              <h2 className="section-title">UNO Q Matrix &amp; Settings</h2>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head-row">
+              <h2 id="settings-modal-title" className="modal-title">
+                UNO Q Matrix &amp; Settings
+              </h2>
               <button
                 type="button"
-                className="icon-btn"
-                onClick={() => setDrawerOpen(false)}
+                className="circle-icon-btn"
+                onClick={() => setSettingsOpen(false)}
                 aria-label="Close settings"
               >
-                <X size={20} />
+                <X size={18} weight="bold" />
               </button>
             </div>
 
@@ -1103,7 +1488,6 @@ export const App: React.FC = () => {
                 matrix={publicState.matrix}
                 canTestHardware={isHost}
                 onTriggerTestState={handleTriggerMatrixTest}
-                compact
               />
             )}
 
