@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.svg" alt="The Last Clue" width="360">
+  <img src="./assets/logo.svg" alt="The Last Clue" width="160" height="160">
 </p>
 
 <h1 align="center">The Last Clue</h1>
