@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="icon-title icon-desc">
+  <title id="icon-title">The Last Clue</title>
+  <desc id="icon-desc">A minimal sheet ghost with two navy eyes and a red mouth.</desc>
+  <g id="ghost-mark">
+    <path
+      fill="#ffffff"
+      stroke="#00142f"
+      stroke-width="3.25"
+      stroke-linejoin="round"
+      d="M12 27
+         C12 15.6 20.4 7.5 32 7.5
+         C43.6 7.5 52 15.6 52 27
+         L52 45.5
+         C52 51.2 45.4 51.2 38.7 45.8
+         C38.7 51.2 32 51.2 25.3 45.8
+         C25.3 51.2 12 51.2 12 45.5
+         Z"
+    />
+    <circle cx="24.6" cy="26.8" r="3.8" fill="#00142f"/>
+    <circle cx="39.4" cy="26.8" r="3.8" fill="#00142f"/>
+    <ellipse cx="32" cy="36.4" rx="3" ry="3.5" fill="#e11d38"/>
+  </g>
+</svg>
