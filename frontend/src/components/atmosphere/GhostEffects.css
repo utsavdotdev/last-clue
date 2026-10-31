@@ -1,0 +1,255 @@
+.ghost-atmosphere {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  contain: layout paint;
+  background:
+    radial-gradient(ellipse at 50% -10%, rgba(225, 29, 56, 0.1), transparent 48%),
+    radial-gradient(ellipse at 50% 110%, rgba(0, 20, 47, 0.14), transparent 52%);
+}
+
+.game-column {
+  position: relative;
+  z-index: 1;
+}
+
+.ghost-mist,
+.ghost-particle,
+.ghost-distant,
+.ghost-wander,
+.ghost-bob,
+.ghost-aura {
+  pointer-events: none;
+}
+
+.ghost-mist {
+  position: absolute;
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(196, 192, 202, 0.48) 0%,
+    rgba(230, 228, 232, 0) 72%
+  );
+  will-change: transform, opacity;
+}
+
+.ghost-mist-a {
+  width: 58vw;
+  height: 38vh;
+  left: -8vw;
+  top: 8vh;
+  animation: ghost-mist-drift 42s ease-in-out infinite;
+}
+
+.ghost-mist-b {
+  width: 46vw;
+  height: 32vh;
+  right: -10vw;
+  bottom: 6vh;
+  animation: ghost-mist-drift 54s ease-in-out infinite reverse;
+}
+
+.ghost-particle {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(0, 20, 47, 0.14);
+  will-change: transform, opacity;
+}
+
+.ghost-particle:nth-child(1) { left: 12%; top: 22%; animation: ghost-speck 18s ease-in-out infinite; }
+.ghost-particle:nth-child(2) { left: 78%; top: 18%; animation: ghost-speck 22s ease-in-out 3s infinite; }
+.ghost-particle:nth-child(3) { left: 28%; top: 68%; animation: ghost-speck 20s ease-in-out 6s infinite; }
+.ghost-particle:nth-child(4) { left: 86%; top: 62%; animation: ghost-speck 26s ease-in-out 1s infinite; }
+.ghost-particle:nth-child(5) { left: 54%; top: 40%; animation: ghost-speck 24s ease-in-out 8s infinite; }
+
+.ghost-distant {
+  position: absolute;
+  opacity: 0.11;
+  will-change: transform, opacity;
+}
+
+.ghost-distant-a {
+  animation: ghost-far-drift 80s ease-in-out infinite;
+}
+
+.ghost-distant-b {
+  animation: ghost-far-drift 96s ease-in-out 20s infinite reverse;
+}
+
+.ghost-wander {
+  position: absolute;
+  top: 0;
+  left: 0;
+  will-change: transform, opacity;
+  animation: ghost-wander 78s ease-in-out infinite;
+}
+
+.ghost-bob {
+  position: relative;
+  animation: ghost-bob 5.6s ease-in-out infinite;
+}
+
+.ghost-aura {
+  position: absolute;
+  inset: -18%;
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(0, 20, 47, 0.05) 0%,
+    rgba(0, 20, 47, 0) 70%
+  );
+}
+
+.ghost-atmosphere[data-mood="suspicious"] .ghost-aura,
+.ghost-atmosphere[data-mood="dramatic"] .ghost-aura {
+  background: radial-gradient(
+    ellipse at center,
+    rgba(225, 29, 56, 0.08) 0%,
+    rgba(225, 29, 56, 0) 70%
+  );
+}
+
+.ghost-atmosphere[data-mood="sleep"] .ghost-wander {
+  animation-duration: 110s;
+}
+
+.ghost-atmosphere[data-mood="watch"] .ghost-eyes,
+.ghost-atmosphere[data-mood="curious"] .ghost-eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ghost-glance 16s ease-in-out infinite;
+}
+
+.ghost-atmosphere[data-mood="suspicious"] .ghost-eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ghost-track 9s ease-in-out infinite;
+}
+
+.ghost-atmosphere[data-moment="reveal"] .ghost-wander {
+  animation: ghost-reveal 3.2s ease-in-out;
+}
+
+.ghost-atmosphere[data-moment="vanish"] .ghost-wander {
+  animation: ghost-vanish 4s ease-in-out;
+}
+
+.ghost-atmosphere[data-hidden="true"] .ghost-mist,
+.ghost-atmosphere[data-hidden="true"] .ghost-particle,
+.ghost-atmosphere[data-hidden="true"] .ghost-distant,
+.ghost-atmosphere[data-hidden="true"] .ghost-wander,
+.ghost-atmosphere[data-hidden="true"] .ghost-bob,
+.ghost-atmosphere[data-hidden="true"] .ghost-eyes {
+  animation-play-state: paused;
+}
+
+@keyframes ghost-wander {
+  0%   { transform: translate3d(8vw, 16vh, 0) rotate(-5deg); opacity: 0.22; }
+  10%  { transform: translate3d(18vw, 10vh, 0) rotate(3deg); opacity: 0.3; }
+  18%  { transform: translate3d(6vw, 26vh, 0) rotate(-2deg); opacity: 0.24; }
+  24%  { transform: translate3d(-10vw, 38vh, 0) rotate(0deg); opacity: 0; }
+  25%  { transform: translate3d(72vw, 64vh, 0) rotate(6deg); opacity: 0; }
+  34%  { transform: translate3d(58vw, 50vh, 0) rotate(-3deg); opacity: 0.28; }
+  46%  { transform: translate3d(62vw, 20vh, 0) rotate(4deg); opacity: 0.32; }
+  52%  { transform: translate3d(60vw, 21vh, 0) rotate(1deg); opacity: 0.34; }
+  60%  { transform: translate3d(38vw, 14vh, 0) rotate(-6deg); opacity: 0.2; }
+  70%  { transform: translate3d(-4vw, 72vh, 0) rotate(2deg); opacity: 0.16; }
+  78%  { transform: translate3d(10vw, 80vh, 0) rotate(-2deg); opacity: 0; }
+  79%  { transform: translate3d(76vw, 6vh, 0) rotate(5deg); opacity: 0; }
+  88%  { transform: translate3d(64vw, 18vh, 0) rotate(2deg); opacity: 0.28; }
+  100% { transform: translate3d(8vw, 16vh, 0) rotate(-5deg); opacity: 0.22; }
+}
+
+@keyframes ghost-bob {
+  0%, 100% { transform: translate3d(0, 0, 0) rotate(-2deg); }
+  50% { transform: translate3d(0, -10px, 0) rotate(2deg); }
+}
+
+@keyframes ghost-mist-drift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.7; }
+  50% { transform: translate3d(6vw, -3vh, 0) scale(1.08); opacity: 0.95; }
+}
+
+@keyframes ghost-speck {
+  0%, 100% { transform: translate3d(0, 0, 0); opacity: 0.08; }
+  40% { transform: translate3d(12px, -28px, 0); opacity: 0.22; }
+  70% { transform: translate3d(-8px, -48px, 0); opacity: 0.05; }
+}
+
+@keyframes ghost-far-drift {
+  0% { transform: translate3d(6vw, 58vh, 0) scale(0.72); opacity: 0.08; }
+  40% { transform: translate3d(42vw, 28vh, 0) scale(0.8); opacity: 0.14; }
+  70% { transform: translate3d(70vw, 46vh, 0) scale(0.7); opacity: 0.07; }
+  100% { transform: translate3d(6vw, 58vh, 0) scale(0.72); opacity: 0.08; }
+}
+
+@keyframes ghost-glance {
+  0%, 62%, 78%, 100% { transform: translateX(0); }
+  68% { transform: translateX(2px); }
+  72% { transform: translateX(-1px); }
+}
+
+@keyframes ghost-track {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-2.4px); }
+  55% { transform: translateX(2.6px); }
+  80% { transform: translateX(-1px); }
+}
+
+@keyframes ghost-reveal {
+  0% { transform: translate3d(48vw, 18vh, 0) scale(0.86) rotate(-8deg); opacity: 0; }
+  28% { transform: translate3d(42vw, 16vh, 0) scale(1.06) rotate(4deg); opacity: 0.42; }
+  55% { transform: translate3d(40vw, 17vh, 0) scale(1) rotate(0deg); opacity: 0.36; }
+  100% { transform: translate3d(38vw, 14vh, 0) rotate(-6deg); opacity: 0.2; }
+}
+
+@keyframes ghost-vanish {
+  0% { opacity: 0.28; }
+  35% { opacity: 0; }
+  36% { transform: translate3d(70vw, 12vh, 0); opacity: 0; }
+  100% { transform: translate3d(64vw, 18vh, 0) rotate(2deg); opacity: 0.26; }
+}
+
+@media (max-width: 720px) {
+  .ghost-mist-b,
+  .ghost-distant-b,
+  .ghost-particle:nth-child(n+4) {
+    display: none;
+  }
+
+  .ghost-wander .ghost-figure {
+    width: 58px;
+    height: 58px;
+  }
+
+  .ghost-wander {
+    animation-duration: 96s;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ghost-mist,
+  .ghost-particle,
+  .ghost-distant {
+    display: none;
+  }
+
+  .ghost-wander,
+  .ghost-bob,
+  .ghost-eyes {
+    animation: none !important;
+  }
+
+  .ghost-wander {
+    top: auto;
+    bottom: 12vh;
+    right: 6vw;
+    left: auto;
+    opacity: 0.16;
+    transform: none;
+  }
+}

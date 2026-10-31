@@ -15,6 +15,7 @@ import {
   WifiHigh,
   X,
 } from "@phosphor-icons/react";
+import { GhostBackground } from "./components/atmosphere/GhostBackground";
 import { GhostMascot } from "./components/GhostMascot";
 import { HostSettingsPanel } from "./components/HostSettingsPanel";
 import { MatrixVisualizer } from "./components/MatrixVisualizer";
@@ -474,6 +475,11 @@ export const App: React.FC = () => {
 
   return (
     <div className="app-root">
+      <GhostBackground
+        phase={credentials ? currentPhase : "LANDING"}
+        winner={publicState?.outcome?.winner ?? null}
+        clueRound={publicState?.clue_round_number ?? 1}
+      />
       <main className="game-column">
         {/* Top Bar */}
         <header className="room-header">

@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>The Last Clue — Outro</title>
+  <style>
+    @font-face {
+      font-family: "DM Sans";
+      src: url("./assets/fonts/DMSans-ExtraBold.ttf") format("truetype");
+      font-weight: 800;
+      font-style: normal;
+      font-display: block;
+    }
+    @font-face {
+      font-family: "DM Sans";
+      src: url("./assets/fonts/DMSans-Medium.ttf") format("truetype");
+      font-weight: 500;
+      font-style: normal;
+      font-display: block;
+    }
+    @font-face {
+      font-family: "DM Sans";
+      src: url("./assets/fonts/DMSans-Italic.ttf") format("truetype");
+      font-weight: 400;
+      font-style: italic;
+      font-display: block;
+    }
+
+    :root {
+      --ground: #c8c2c6;
+      --surface: #efe4d4;
+      --ink: #00142f;
+      --muted: #556070;
+      --accent: #e11d38;
+      --led-board: #0b0f17;
+      --led-on: #38bdf8;
+      --led-off: #1e2636;
+    }
+
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+      font-family: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    #stage {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      transform-origin: 0 0;
+    }
+
+    .layer {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    #fog {
+      background-color: var(--ground);
+      background-image:
+        radial-gradient(920px 620px at 88% -8%, rgba(225, 29, 56, 0.12), transparent 58%),
+        radial-gradient(780px 520px at -6% 108%, rgba(0, 20, 47, 0.12), transparent 52%),
+        radial-gradient(640px 420px at 42% 46%, rgba(255, 248, 236, 0.42), transparent 70%);
+    }
+
+    #matrix-scene {
+      background: var(--led-board);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #led-board {
+      width: 1040px;
+      padding: 36px;
+      border-radius: 28px;
+      background: #0b0f17;
+      box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.08);
+    }
+
+    #led-grid {
+      display: grid;
+      grid-template-columns: repeat(13, 1fr);
+      gap: 10px;
+      aspect-ratio: 13 / 8;
+    }
+
+    .led {
+      border-radius: 3px;
+      background: var(--led-off);
+    }
+
+    .led.on {
+      background: var(--led-on);
+    }
+
+    #remain-scene,
+    #logo-scene {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #ghost-wrap {
+      width: 220px;
+      height: 260px;
+      position: relative;
+    }
+
+    #ghost-wrap svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    #remain-line {
+      margin-top: 48px;
+      color: var(--ink);
+      font-weight: 800;
+      font-size: 44px;
+      letter-spacing: -0.01em;
+      text-align: center;
+    }
+
+    #lockup {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+    }
+
+    #lockup-mark {
+      width: 168px;
+      height: 168px;
+    }
+
+    #lockup-mark svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    #wordmark {
+      margin-top: 28px;
+      color: var(--ink);
+      font-weight: 800;
+      font-size: 92px;
+      letter-spacing: 0.02em;
+      line-height: 1;
+    }
+
+    #tagline {
+      margin-top: 22px;
+      color: var(--muted);
+      font-style: italic;
+      font-weight: 400;
+      font-size: 30px;
+    }
+
+    #tech {
+      margin-top: 36px;
+      color: var(--muted);
+      font-weight: 800;
+      font-size: 20px;
+      letter-spacing: 0.08em;
+    }
+
+    #oss {
+      margin-top: 10px;
+      color: var(--muted);
+      font-weight: 800;
+      font-size: 18px;
+      letter-spacing: 0.08em;
+    }
+
+    #blackout {
+      background: #000;
+    }
+
+    .lid {
+      transform-box: fill-box;
+      transform-origin: center;
+    }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <div id="fog" class="layer"></div>
+
+    <div id="remain-scene" class="layer">
+      <div id="ghost-wrap">
+        <svg viewBox="14 10 44 52" aria-hidden="true">
+          <path fill="#ffffff" stroke="#00142f" stroke-width="3.5" stroke-linejoin="round"
+            d="M16 34 C16 21.85 24.95 12 36 12 C47.05 12 56 21.85 56 34 V57 C56 58.6 54.1 59.5 52.8 58.4 L48.5 54.8 C47.4 53.9 45.8 53.9 44.7 54.8 L40.3 58.5 C37.8 60.5 34.2 60.5 31.7 58.5 L27.3 54.8 C26.2 53.9 24.6 53.9 23.5 54.8 L19.2 58.4 C17.9 59.5 16 58.6 16 57 V34 Z"/>
+          <circle id="eye-l" cx="28.5" cy="33" r="3.8" fill="#00142f"/>
+          <circle id="eye-r" cx="43.5" cy="33" r="3.8" fill="#00142f"/>
+          <rect class="lid" id="lid-l" x="24.4" y="29.2" width="8.2" height="7.6" rx="3.8" fill="#ffffff"/>
+          <rect class="lid" id="lid-r" x="39.4" y="29.2" width="8.2" height="7.6" rx="3.8" fill="#ffffff"/>
+          <ellipse cx="36" cy="43" rx="3.2" ry="3.8" fill="#e11d38"/>
+        </svg>
+      </div>
+      <div id="remain-line">THE GAME ENDS. THE GHOST REMAINS.</div>
+    </div>
+
+    <div id="logo-scene" class="layer">
+      <div id="lockup">
+        <div id="lockup-mark">
+          <svg viewBox="0 0 64 64" aria-hidden="true">
+            <rect x="3" y="3" width="58" height="58" rx="14" fill="#ffffff" stroke="#00142f" stroke-width="3"/>
+            <g transform="translate(7.2 6.4) scale(0.69)">
+              <path fill="#ffffff" stroke="#00142f" stroke-width="3.5" stroke-linejoin="round"
+                d="M16 34 C16 21.85 24.95 12 36 12 C47.05 12 56 21.85 56 34 V57 C56 58.6 54.1 59.5 52.8 58.4 L48.5 54.8 C47.4 53.9 45.8 53.9 44.7 54.8 L40.3 58.5 C37.8 60.5 34.2 60.5 31.7 58.5 L27.3 54.8 C26.2 53.9 24.6 53.9 23.5 54.8 L19.2 58.4 C17.9 59.5 16 58.6 16 57 V34 Z"/>
+              <circle cx="28.5" cy="33" r="3.8" fill="#00142f"/>
+              <circle cx="43.5" cy="33" r="3.8" fill="#00142f"/>
+              <rect class="lid" id="logo-lid-l" x="24.4" y="29.2" width="8.2" height="7.6" rx="3.8" fill="#ffffff"/>
+              <rect class="lid" id="logo-lid-r" x="39.4" y="29.2" width="8.2" height="7.6" rx="3.8" fill="#ffffff"/>
+              <ellipse cx="36" cy="43" rx="3.2" ry="3.8" fill="#e11d38"/>
+            </g>
+          </svg>
+        </div>
+        <div id="wordmark">THE LAST CLUE</div>
+        <div id="tagline">One Word. One Imposter. Zero Trust.</div>
+        <div id="tech">ARDUINO UNO Q × LOCAL AI</div>
+        <div id="oss">OPEN SOURCE PROJECT</div>
+      </div>
+    </div>
+
+    <div id="matrix-scene" class="layer">
+      <div id="led-board">
+        <div id="led-grid"></div>
+      </div>
+    </div>
+
+    <div id="blackout" class="layer"></div>
+  </div>
+
+  <script>
+    const DURATION = 8;
+    const COLS = 13;
+    const ROWS = 8;
+
+    const CALM_A = [
+      "....#####....",
+      "...#######...",
+      "..##.#.#.##..",
+      "..#########..",
+      "..#########..",
+      "..#########..",
+      "..##.###.##..",
+      "..#...#...#..",
+    ];
+    const BLINK = [
+      "....#####....",
+      "...#######...",
+      "..##.....##..",
+      "..#########..",
+      "..#########..",
+      "..#########..",
+      "..##.###.##..",
+      "..#...#...#..",
+    ];
+
+    const leds = [];
+    const grid = document.getElementById("led-grid");
+    for (let i = 0; i < ROWS * COLS; i += 1) {
+      const cell = document.createElement("div");
+      cell.className = "led";
+      grid.appendChild(cell);
+      leds.push(cell);
+    }
+
+    const el = {
+      stage: document.getElementById("stage"),
+      fog: document.getElementById("fog"),
+      matrix: document.getElementById("matrix-scene"),
+      remain: document.getElementById("remain-scene"),
+      logo: document.getElementById("logo-scene"),
+      ghost: document.getElementById("ghost-wrap"),
+      remainLine: document.getElementById("remain-line"),
+      lockup: document.getElementById("lockup"),
+      wordmark: document.getElementById("wordmark"),
+      tagline: document.getElementById("tagline"),
+      tech: document.getElementById("tech"),
+      oss: document.getElementById("oss"),
+      blackout: document.getElementById("blackout"),
+      lidL: document.getElementById("lid-l"),
+      lidR: document.getElementById("lid-r"),
+      logoLidL: document.getElementById("logo-lid-l"),
+      logoLidR: document.getElementById("logo-lid-r"),
+    };
+
+    function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+    function lerp(a, b, t) { return a + (b - a) * t; }
+    function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+    function easeInOutCubic(t) {
+      return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    }
+    function range(t, a, b) {
+      if (b === a) return 1;
+      return clamp((t - a) / (b - a), 0, 1);
+    }
+    function blinkAmount(t, start, end) {
+      const u = range(t, start, end);
+      if (u <= 0 || u >= 1) return 0;
+      return Math.sin(u * Math.PI);
+    }
+
+    function paintMatrix(sprite) {
+      for (let r = 0; r < ROWS; r += 1) {
+        for (let c = 0; c < COLS; c += 1) {
+          leds[r * COLS + c].classList.toggle("on", sprite[r][c] === "#");
+        }
+      }
+    }
+
+    function opacityStyle(node, value) {
+      node.style.opacity = String(value);
+      node.style.visibility = value <= 0.001 ? "hidden" : "visible";
+    }
+
+    function setLids(left, right, amount) {
+      const y = lerp(0.08, 1, amount);
+      left.style.transform = "scaleY(" + y + ")";
+      right.style.transform = "scaleY(" + y + ")";
+      left.style.opacity = String(amount);
+      right.style.opacity = String(amount);
+    }
+
+    function fitStage() {
+      const sx = window.innerWidth / 1920;
+      const sy = window.innerHeight / 1080;
+      const s = Math.min(sx, sy);
+      el.stage.style.transform = "scale(" + s + ")";
+      el.stage.style.marginLeft = Math.max(0, (window.innerWidth - 1920 * s) / 2) + "px";
+      el.stage.style.marginTop = Math.max(0, (window.innerHeight - 1080 * s) / 2) + "px";
+    }
+
+    function draw(t) {
+      const time = clamp(t, 0, DURATION);
+      const matrixBlink = blinkAmount(time, 0.72, 0.96) > 0.55;
+      paintMatrix(matrixBlink ? BLINK : CALM_A);
+
+      const matrixOut = easeInOutCubic(range(time, 1.20, 1.90));
+      opacityStyle(el.matrix, 1 - matrixOut);
+      el.matrix.style.transform = "scale(" + lerp(1, 1.04, matrixOut) + ")";
+
+      const fogIn = easeInOutCubic(range(time, 1.20, 2.00));
+      opacityStyle(el.fog, fogIn);
+
+      const remainIn = easeOutCubic(range(time, 1.45, 2.20));
+      const remainOut = easeInOutCubic(range(time, 3.85, 4.55));
+      const remainVis = remainIn * (1 - remainOut);
+      const drift = easeOutCubic(range(time, 1.50, 3.80));
+      opacityStyle(el.remain, remainVis);
+      el.ghost.style.transform =
+        "translateY(" + lerp(18, -4, drift) + "px) rotate(" + lerp(-1.2, 0.6, drift) + "deg)";
+      opacityStyle(el.remainLine, easeOutCubic(range(time, 1.85, 2.55)) * (1 - remainOut));
+      setLids(el.lidL, el.lidR, 0);
+
+      const logoIn = easeOutCubic(range(time, 4.05, 4.85));
+      opacityStyle(el.logo, logoIn);
+      el.lockup.style.transform = "translateY(" + lerp(18, 0, logoIn) + "px) scale(" + lerp(0.985, 1, logoIn) + ")";
+      opacityStyle(el.wordmark, easeOutCubic(range(time, 4.18, 4.85)));
+      opacityStyle(el.tagline, easeOutCubic(range(time, 4.55, 5.20)));
+      opacityStyle(el.tech, easeOutCubic(range(time, 5.05, 5.65)));
+      opacityStyle(el.oss, easeOutCubic(range(time, 5.00, 5.55)));
+      setLids(el.logoLidL, el.logoLidR, blinkAmount(time, 6.55, 6.82));
+
+      const fade = easeInOutCubic(range(time, 7.15, 8.00));
+      opacityStyle(el.blackout, fade);
+    }
+
+    window.seek = function seek(seconds) {
+      draw(Number(seconds) || 0);
+    };
+
+    const renderMode = /[?&]render(?:&|$)/.test(location.search);
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      || /[?&]reduced(?:&|$)/.test(location.search);
+
+    let start = 0;
+    let raf = 0;
+
+    function play(now) {
+      if (!start) start = now;
+      const t = ((now - start) / 1000);
+      if (t >= DURATION) {
+        draw(DURATION);
+        return;
+      }
+      draw(t);
+      raf = requestAnimationFrame(play);
+    }
+
+    function ready() {
+      fitStage();
+      window.addEventListener("resize", fitStage);
+      if (reduced) {
+        draw(5.6);
+        window.__ready = true;
+        return;
+      }
+      if (renderMode) {
+        draw(0);
+      } else {
+        requestAnimationFrame(play);
+      }
+      window.__ready = true;
+    }
+
+    document.fonts.ready.then(ready);
+    window.addEventListener("load", function () {
+      if (!window.__ready) ready();
+    });
+  </script>
+</body>
+</html>
